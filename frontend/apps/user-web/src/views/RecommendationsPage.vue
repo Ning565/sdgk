@@ -189,7 +189,7 @@ async function fetchSmartRecommendations() {
     const schoolType = schoolTypeFilter(p.schoolNature);
     await volunteerStore.fetchRecommendations({
       year: p.year || currentYear,
-      educationLevel: p.educationLevel,
+      educationLevel: 'VOCATIONAL',
       score: p.score,
       rank: p.rank,
       subjects: p.subjects || [],
