@@ -56,4 +56,10 @@ public interface RecommendationMapper {
                     @Param("historyVersionId") Long historyVersionId,
                     @Param("userId") Long userId,
                     @Param("subjectComboIndex") Integer subjectComboIndex);
+
+    long countSchools(@Param("req") RecommendationRequest req,
+                      @Param("dataVersionId") Long dataVersionId,
+                      @Param("historyVersionId") Long historyVersionId,
+                      @Param("userId") Long userId,
+                      @Param("subjectComboIndex") Integer subjectComboIndex);
 }

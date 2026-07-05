@@ -100,7 +100,7 @@ BUILD_DIR="/tmp/${RELEASE_NAME}"
 TARBALL="/tmp/${RELEASE_NAME}.tar.gz"
 
 echo "==> Building backend"
-mvn -f backend/pom.xml -pl admission-boot -am clean package -DskipTests
+mvn -f backend/pom.xml -pl admission-boot -am clean install -DskipTests
 mvn -f backend/pom.xml -pl admission-boot package org.springframework.boot:spring-boot-maven-plugin:3.4.4:repackage -DskipTests
 
 echo "==> Building frontend"

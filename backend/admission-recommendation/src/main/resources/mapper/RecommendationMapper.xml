@@ -87,4 +87,11 @@
         LEFT JOIN prediction_result pr ON ep.id = pr.plan_id
         WHERE 1=1 <include refid="hardFilter"/><include refid="userFilter"/>
     </select>
+    <select id="countSchools" resultType="long">
+        SELECT COUNT(DISTINCT ep.school_id) FROM enrollment_plan ep
+        INNER JOIN school s ON ep.school_id = s.id
+        LEFT JOIN standard_major sm ON ep.standard_major_code = sm.code
+        LEFT JOIN prediction_result pr ON ep.id = pr.plan_id
+        WHERE 1=1 <include refid="hardFilter"/><include refid="userFilter"/>
+    </select>
 </mapper>

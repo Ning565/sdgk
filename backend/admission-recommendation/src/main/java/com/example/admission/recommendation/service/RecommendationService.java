@@ -133,6 +133,13 @@ public class RecommendationService {
                 userId,
                 subjectComboIndex
         );
+        long totalSchools = recommendationMapper.countSchools(
+                req,
+                planVersion.getDataVersionId(),
+                historyVersion != null ? historyVersion.getDataVersionId() : null,
+                userId,
+                subjectComboIndex
+        );
 
         // 7. 映射为响应 DTO
         List<PlanRecommendationResponse> planResponses = planVOs.stream()
@@ -142,12 +149,6 @@ public class RecommendationService {
         // 8. 按院校分组
         List<SchoolGroupResponse> schoolGroups = SchoolGrouper.group(
                 planResponses, req.getSortBy(), req.getSortDir());
-
-        // 9. 统计院校数
-        int totalSchools = (int) planResponses.stream()
-                .map(PlanRecommendationResponse::getSchoolId)
-                .distinct()
-                .count();
 
         // 10. 获取模型版本（从第一条有预测数据的记录中提取）
         String modelVersion = planVOs.stream()
@@ -160,7 +161,7 @@ public class RecommendationService {
         return RecommendationResponse.builder()
                 .schoolGroups(schoolGroups)
                 .totalPlans(totalPlans)
-                .totalSchools(totalSchools)
+                .totalSchools((int) totalSchools)
                 .planDataVersion("v" + planVersion.getDataVersionId())
                 .historyDataVersion(historyVersion != null
                         ? "v" + historyVersion.getDataVersionId() : null)
