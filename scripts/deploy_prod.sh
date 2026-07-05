@@ -79,6 +79,7 @@ need_cmd python3
 need_file "$SSH_KEY"
 need_file "data/organized/modeling_outputs/specialized_rank_model_2026.csv"
 need_file "data/organized/modeling_inputs/extracted_csv/shandong_score_rank_2026.csv"
+need_file "data/organized/modeling_inputs/extracted_csv/shandong_2026_bachelor_3in1.csv"
 
 chmod 600 "$SSH_KEY" >/dev/null 2>&1 || true
 
@@ -164,6 +165,10 @@ values = [
 print(",\n".join(values) + ";")
 print("COMMIT;")
 PY
+
+python3 scripts/generate_undergraduate_seed_sql.py \
+  --input data/organized/modeling_inputs/extracted_csv/shandong_2026_bachelor_3in1.csv \
+  > "$BUILD_DIR/sql/seed_enrollment_plan_2026.sql"
 
 cat > "$BUILD_DIR/deploy/application-prod.yml" <<'YAML'
 server:
@@ -326,10 +331,14 @@ for i in $(seq 1 40); do
 done
 
 mysql -u admission -padmission123 admission_platform < "$RELEASE_DIR/sql/seed_score_rank_2026.sql"
+mysql -u admission -padmission123 admission_platform < "$RELEASE_DIR/sql/seed_enrollment_plan_2026.sql"
 
 curl -fsS http://127.0.0.1:8080/api/v1/recommendations/search \
   -H 'Content-Type: application/json' \
   --data-raw '{"year":2026,"educationLevel":"VOCATIONAL","score":410,"rank":430178,"subjects":["历史","生物","地理"],"pageNo":1,"pageSize":1,"recommendationCount":1}' >/dev/null
+curl -fsS http://127.0.0.1:8080/api/v1/recommendations/search \
+  -H 'Content-Type: application/json' \
+  --data-raw '{"year":2026,"educationLevel":"UNDERGRADUATE","score":520,"rank":140000,"subjects":["历史","生物","地理"],"pageNo":1,"pageSize":1,"recommendationCount":1}' >/dev/null
 curl -fsS http://127.0.0.1/health
 
 echo
@@ -352,6 +361,9 @@ curl --noproxy '*' -fsSI "http://${REMOTE_HOST}/admin/" >/dev/null
 curl --noproxy '*' -fsS "http://${REMOTE_HOST}/api/v1/recommendations/search" \
   -H 'Content-Type: application/json' \
   --data-raw '{"year":2026,"educationLevel":"VOCATIONAL","score":410,"rank":430178,"subjects":["历史","生物","地理"],"pageNo":1,"pageSize":1,"recommendationCount":1}' >/dev/null
+curl --noproxy '*' -fsS "http://${REMOTE_HOST}/api/v1/recommendations/search" \
+  -H 'Content-Type: application/json' \
+  --data-raw '{"year":2026,"educationLevel":"UNDERGRADUATE","score":520,"rank":140000,"subjects":["历史","生物","地理"],"pageNo":1,"pageSize":1,"recommendationCount":1}' >/dev/null
 
 echo
 echo "Done: http://${REMOTE_HOST}/"

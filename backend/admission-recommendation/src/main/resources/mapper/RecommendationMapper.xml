@@ -51,6 +51,9 @@
         <choose>
             <when test="req.sortBy == 'planCount'">ORDER BY ep.plan_count <if test="req.sortDir == 'asc'">ASC</if><if test="req.sortDir != 'asc'">DESC</if></when>
             <when test="req.sortBy == 'tuition'">ORDER BY ep.tuition <if test="req.sortDir == 'asc'">ASC</if><if test="req.sortDir != 'asc'">DESC</if></when>
+            <when test="req.sortBy == 'lastYearMinRank'">ORDER BY ep.last_year_min_rank IS NULL ASC, ep.last_year_min_rank <if test="req.sortDir == 'asc'">ASC</if><if test="req.sortDir != 'asc'">DESC</if></when>
+            <when test="req.sortBy == 'rankDiff' and candidateRank != null">ORDER BY COALESCE(pr.predicted_rank_min, ep.predicted_rank) IS NULL ASC, ABS(COALESCE(pr.predicted_rank_min, ep.predicted_rank) - #{candidateRank}) <if test="req.sortDir == 'asc'">ASC</if><if test="req.sortDir != 'asc'">DESC</if></when>
+            <when test="req.sortBy == 'probability' and candidateRank != null">ORDER BY COALESCE(pr.probability, 100.0 / (1.0 + EXP((#{candidateRank} - COALESCE(pr.predicted_rank_min, ep.predicted_rank)) / 8000.0))) <if test="req.sortDir == 'asc'">ASC</if><if test="req.sortDir != 'asc'">DESC</if></when>
             <otherwise>ORDER BY ep.id DESC</otherwise>
         </choose>
     </sql>
@@ -66,8 +69,10 @@
                s.province, s.city, s.school_type, s.school_tag,
                sm.subcategory_name AS major_subcategory,
                ep.last_year_min_rank, ep.last_year_min_score, ep.last_year_plan_count, ep.two_year_min_rank, ep.three_year_min_rank,
-               pr.probability, pr.label, pr.predicted_rank_min AS predicted_rank,
-               pr.predicted_rank_min AS rank_range_min, pr.predicted_rank_max AS rank_range_max, pr.model_version
+               pr.probability, pr.label, COALESCE(pr.predicted_rank_min, ep.predicted_rank) AS predicted_rank,
+               COALESCE(pr.predicted_rank_min, ep.rank_range_min) AS rank_range_min,
+               COALESCE(pr.predicted_rank_max, ep.rank_range_max) AS rank_range_max,
+               pr.model_version
         FROM enrollment_plan ep
         INNER JOIN school s ON ep.school_id = s.id
         LEFT JOIN standard_major sm ON ep.standard_major_code = sm.code

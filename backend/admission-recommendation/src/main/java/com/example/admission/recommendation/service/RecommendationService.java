@@ -18,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -103,7 +104,8 @@ public class RecommendationService {
                 DATA_TYPE_HISTORY, req.getYear() - 1);
 
         // 2. 获取考生位次（只要有用户ID就尝试获取）
-        final Integer candidateRank = userId != null ? getCandidateRank(userId) : null;
+        final Integer candidateRank = req.getRank() != null ? req.getRank()
+                : (userId != null ? getCandidateRank(userId) : null);
 
         // 3. 获取选科组合索引
         Integer subjectComboIndex = req.getSubjectComboIndex();
@@ -416,23 +418,29 @@ public class RecommendationService {
         BigDecimal probability = vo.getProbability();
         String label = vo.getLabel();
 
-        // 若无预测数据，使用学校层次启发式算法
+        // 若无 profile-specific 预测数据，优先使用导入数据中的当前年度预估位次计算概率。
         if (probability == null || label == null) {
-            String code = vo.getSchoolCode();
-            // 基于学校代码层次分配确定性概率（plan_id 作为种子，保证同一计划每次结果一致）
-            long seed = vo.getPlanId() != null ? vo.getPlanId() : 0;
-            double rand = ((seed * 2654435761L) & 0x7FFFFFFF) / (double) 0x7FFFFFFF;
-            double baseProb;
-            if (code != null && code.startsWith("A")) baseProb = 0.20 + rand * 0.40;  // 公办本科 20-60%
-            else if (code != null && code.startsWith("B")) baseProb = 0.25 + rand * 0.45;  // 25-70%
-            else if (code != null && code.startsWith("C")) baseProb = 0.30 + rand * 0.45;  // 30-75%
-            else baseProb = 0.40 + rand * 0.45;  // 民办/高职 40-85%
+            if (candidateRank != null && vo.getPredictedRank() != null) {
+                double scale = 8000.0;
+                double raw = 100.0 / (1.0 + Math.exp((candidateRank - vo.getPredictedRank()) / scale));
+                double clamped = Math.max(1.0, Math.min(99.99, raw));
+                probability = BigDecimal.valueOf(clamped).setScale(2, RoundingMode.HALF_UP);
+                label = labelByProbability(probability);
+            } else {
+                String code = vo.getSchoolCode();
+                // 基于学校代码层次分配确定性概率（plan_id 作为种子，保证同一计划每次结果一致）
+                long seed = vo.getPlanId() != null ? vo.getPlanId() : 0;
+                double rand = ((seed * 2654435761L) & 0x7FFFFFFF) / (double) 0x7FFFFFFF;
+                double baseProb;
+                if (code != null && code.startsWith("A")) baseProb = 0.20 + rand * 0.40;  // 公办本科 20-60%
+                else if (code != null && code.startsWith("B")) baseProb = 0.25 + rand * 0.45;  // 25-70%
+                else if (code != null && code.startsWith("C")) baseProb = 0.30 + rand * 0.45;  // 30-75%
+                else baseProb = 0.40 + rand * 0.45;  // 民办/高职 40-85%
 
-            int probInt = (int) Math.round(baseProb * 100);
-            probability = BigDecimal.valueOf(probInt);
-            if (probInt >= 60) label = "保";
-            else if (probInt >= 30) label = "稳";
-            else label = "冲";
+                int probInt = (int) Math.round(baseProb * 100);
+                probability = BigDecimal.valueOf(probInt);
+                label = labelByProbability(probability);
+            }
         }
 
         return PlanRecommendationResponse.builder()
@@ -474,5 +482,15 @@ public class RecommendationService {
                 .rankDiff(rankDiff)
                 .planChange(planChange)
                 .build();
+    }
+
+    private static String labelByProbability(BigDecimal probability) {
+        if (probability.compareTo(BigDecimal.valueOf(80)) >= 0) {
+            return "保";
+        }
+        if (probability.compareTo(BigDecimal.valueOf(50)) >= 0) {
+            return "稳";
+        }
+        return "冲";
     }
 }
