@@ -247,21 +247,20 @@ def main() -> None:
     ]
     for start in range(0, len(plan_rows), 300):
         batch = plan_rows[start:start + 300]
-        print(f"INSERT INTO enrollment_plan (data_version_id, {', '.join(plan_columns)})")
-        print("SELECT @plan_version_id, v.* FROM (")
-        selects = []
+        print(f"INSERT INTO enrollment_plan (data_version_id, {', '.join(plan_columns)}) VALUES")
+        values_sql = []
         for values in batch:
             plan_code, year, school_code, *rest = values
             selected = [
+                "@plan_version_id",
                 sql(plan_code),
                 str(year),
                 f"(SELECT id FROM school WHERE code = {sql(school_code)} LIMIT 1)",
                 sql(school_code),
                 *[sql(value) for value in rest],
             ]
-            selects.append("SELECT " + ", ".join(selected))
-        print("\nUNION ALL\n".join(selects))
-        print(") AS v;")
+            values_sql.append("(" + ", ".join(selected) + ")")
+        print(",\n".join(values_sql) + ";")
 
     print("COMMIT;")
 
