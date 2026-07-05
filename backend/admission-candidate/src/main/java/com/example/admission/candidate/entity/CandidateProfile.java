@@ -59,31 +59,34 @@ public class CandidateProfile {
     private String educationLevel;
 
     /** 意向地域 JSON 字符串 */
-    @TableField("preferred_regions_json")
+    @TableField(value = "preferred_regions_json", updateStrategy = FieldStrategy.ALWAYS)
     private String preferredRegionsJson;
 
     /** 意向专业 JSON 字符串 */
-    @TableField("preferred_majors_json")
+    @TableField(value = "preferred_majors_json", updateStrategy = FieldStrategy.ALWAYS)
     private String preferredMajorsJson;
 
     /** 排除专业 JSON 字符串 */
-    @TableField("excluded_majors_json")
+    @TableField(value = "excluded_majors_json", updateStrategy = FieldStrategy.ALWAYS)
     private String excludedMajorsJson;
 
     /** 学费上限（元/年） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private Integer tuitionMax;
 
     /** 学校性质偏好: PUBLIC / PRIVATE / UNLIMITED */
     private String schoolNature;
 
     /** 是否接受中外合作办学 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private Boolean acceptJointProgram;
 
     /** 合作类型偏好 JSON 字符串 */
-    @TableField("cooperation_types_json")
+    @TableField(value = "cooperation_types_json", updateStrategy = FieldStrategy.ALWAYS)
     private String cooperationTypesJson;
 
     /** 备注说明 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String remark;
 
     /** 创建时间 */
@@ -193,7 +196,7 @@ public class CandidateProfile {
 
     private String toJson(List<String> list) {
         if (list == null || list.isEmpty()) {
-            return null;
+            return "[]";
         }
         try {
             return objectMapper.writeValueAsString(list);

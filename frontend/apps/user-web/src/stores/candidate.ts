@@ -6,24 +6,44 @@ import { candidateApi } from '@gaokao/api-client';
 export const useCandidateStore = defineStore('candidate', () => {
   const candidateProfile = ref<CandidateProfile | null>(null);
   const loading = ref(false);
+  let activeRequestId = 0;
+  let pendingRequests = 0;
+
+  function beginRequest() {
+    activeRequestId += 1;
+    pendingRequests += 1;
+    loading.value = true;
+    return activeRequestId;
+  }
+
+  function endRequest() {
+    pendingRequests = Math.max(0, pendingRequests - 1);
+    loading.value = pendingRequests > 0;
+  }
 
   async function fetchProfile(year: number) {
-    loading.value = true;
+    const requestId = beginRequest();
     try {
       const res = await candidateApi.getProfile(year);
-      candidateProfile.value = res.data;
+      if (requestId === activeRequestId) {
+        candidateProfile.value = res.data;
+      }
+      return res.data;
     } finally {
-      loading.value = false;
+      endRequest();
     }
   }
 
   async function updateProfile(year: number, data: Partial<CandidateProfile>) {
-    loading.value = true;
+    const requestId = beginRequest();
     try {
       const res = await candidateApi.updateProfile(year, data);
-      candidateProfile.value = res.data;
+      if (requestId === activeRequestId) {
+        candidateProfile.value = res.data;
+      }
+      return res.data;
     } finally {
-      loading.value = false;
+      endRequest();
     }
   }
 

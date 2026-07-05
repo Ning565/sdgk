@@ -155,7 +155,6 @@ async function handleSave() {
 
   try {
     await store.updateProfile(form.year, toProfilePayload());
-    await store.fetchProfile(form.year);
     syncFormFromProfile();
     ElMessage.success('保存成功');
     isEditing.value = false;
@@ -175,7 +174,6 @@ async function handleStartRecommendation() {
     }
     try {
       await store.updateProfile(form.year, toProfilePayload());
-      await store.fetchProfile(form.year);
       syncFormFromProfile();
       isEditing.value = false;
     } catch (err: unknown) {
