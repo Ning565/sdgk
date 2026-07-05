@@ -49,6 +49,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/VolunteerFormDetailPage.vue'),
         meta: { title: '志愿表详情', requiresAuth: true },
       },
+      {
+        path: 'help',
+        name: 'Help',
+        component: () => import('@/views/HelpPage.vue'),
+        meta: { title: '使用说明', requiresAuth: true },
+      },
     ],
   },
   {

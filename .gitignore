@@ -36,6 +36,7 @@ backend/**/logs/
 .env
 .env.*
 !.env.example
+*.pem
 application-local.yml
 application-local.yaml
 

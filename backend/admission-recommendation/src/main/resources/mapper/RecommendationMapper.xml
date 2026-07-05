@@ -33,8 +33,19 @@
     <sql id="userFilter">
         <if test="req.keyword != null and req.keyword != ''">AND (s.name LIKE CONCAT('%', #{req.keyword}, '%') OR ep.major_name LIKE CONCAT('%', #{req.keyword}, '%'))</if>
         <if test="req.province != null and req.province.size() > 0">AND s.province IN <foreach collection="req.province" item="p" open="(" separator="," close=")">#{p}</foreach></if>
+        <if test="req.city != null and req.city.size() > 0">AND s.city IN <foreach collection="req.city" item="c" open="(" separator="," close=")">#{c}</foreach></if>
+        <if test="req.schoolType != null and req.schoolType.size() > 0">AND s.school_type IN <foreach collection="req.schoolType" item="st" open="(" separator="," close=")">#{st}</foreach></if>
+        <if test="req.majorCategory != null and req.majorCategory.size() > 0">AND sm.category_name IN <foreach collection="req.majorCategory" item="mc" open="(" separator="," close=")">#{mc}</foreach></if>
+        <if test="req.majorSubcategory != null and req.majorSubcategory.size() > 0">AND sm.subcategory_name IN <foreach collection="req.majorSubcategory" item="ms" open="(" separator="," close=")">#{ms}</foreach></if>
+        <if test="req.excludeMajorCategory != null and req.excludeMajorCategory.size() > 0">AND (sm.category_name IS NULL OR sm.category_name NOT IN <foreach collection="req.excludeMajorCategory" item="emc" open="(" separator="," close=")">#{emc}</foreach>)</if>
+        <if test="req.excludeMajorSubcategory != null and req.excludeMajorSubcategory.size() > 0">AND (sm.subcategory_name IS NULL OR sm.subcategory_name NOT IN <foreach collection="req.excludeMajorSubcategory" item="ems" open="(" separator="," close=")">#{ems}</foreach>)</if>
+        <if test="req.enrollmentType != null and req.enrollmentType.size() > 0">AND ep.enrollment_type_code IN <foreach collection="req.enrollmentType" item="et" open="(" separator="," close=")">#{et}</foreach></if>
+        <if test="req.excludeSinoForeign != null and req.excludeSinoForeign">AND ep.enrollment_type_code NOT LIKE '%中外%'</if>
+        <if test="req.excludeSchoolEnterprise != null and req.excludeSchoolEnterprise">AND ep.enrollment_type_code NOT LIKE '%校企%'</if>
         <if test="req.tuitionMin != null">AND ep.tuition &gt;= #{req.tuitionMin}</if>
         <if test="req.tuitionMax != null">AND ep.tuition &lt;= #{req.tuitionMax}</if>
+        <if test="req.planCountMin != null">AND ep.plan_count &gt;= #{req.planCountMin}</if>
+        <if test="req.planCountMax != null">AND ep.plan_count &lt;= #{req.planCountMax}</if>
     </sql>
     <sql id="orderBy">
         <choose>

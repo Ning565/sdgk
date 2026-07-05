@@ -126,6 +126,8 @@ export const useVolunteerStore = defineStore('volunteer', () => {
       label: plan.label,
       planCount: plan.planCount,
       tuition: plan.tuition,
+      subjectRequirementText: plan.subjectRequirementText,
+      planStatus: plan.planStatus,
       lastYearMinRank: plan.lastYearMinRank,
       predictedRank: plan.predictedRank,
     });

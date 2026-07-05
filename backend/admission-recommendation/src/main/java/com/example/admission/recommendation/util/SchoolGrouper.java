@@ -17,13 +17,10 @@ import java.util.*;
  *   <li>先按 schoolId 分组</li>
  *   <li>院校组按该校最优（最高或最低，取决于排序方向）排序值排列</li>
  *   <li>院校内专业按同一排序字段排列</li>
- *   <li>每个院校组内最多返回前 20 个专业</li>
+ *   <li>每个院校组内返回本次推荐命中的全部专业</li>
  * </ol>
  */
 public final class SchoolGrouper {
-
-    /** 每个院校组内最多返回的专业数 */
-    private static final int MAX_PLANS_PER_SCHOOL = 20;
 
     private SchoolGrouper() {
     }
@@ -55,10 +52,7 @@ public final class SchoolGrouper {
         for (Map.Entry<Long, List<PlanRecommendationResponse>> entry : schoolPlanMap.entrySet()) {
             List<PlanRecommendationResponse> schoolPlans = entry.getValue();
 
-            // 取前 MAX_PLANS_PER_SCHOOL 个专业
-            List<PlanRecommendationResponse> topPlans = schoolPlans.size() > MAX_PLANS_PER_SCHOOL
-                    ? new ArrayList<>(schoolPlans.subList(0, MAX_PLANS_PER_SCHOOL))
-                    : new ArrayList<>(schoolPlans);
+            List<PlanRecommendationResponse> topPlans = new ArrayList<>(schoolPlans);
 
             // 获取院校基本信息（从第一个专业中提取）
             PlanRecommendationResponse firstPlan = schoolPlans.get(0);

@@ -174,6 +174,8 @@ export interface RecommendationRequest {
   enrollmentType?: string[];
   excludeMajorCategory?: string[];
   excludeMajorSubcategory?: string[];
+  excludeSinoForeign?: boolean;
+  excludeSchoolEnterprise?: boolean;
   tuitionMin?: number;
   tuitionMax?: number;
   planCountMin?: number;
@@ -181,6 +183,11 @@ export interface RecommendationRequest {
   probabilityMin?: number;
   probabilityMax?: number;
   label?: string;
+  recommendationCount?: number;
+  rushRatio?: number;
+  stableRatio?: number;
+  safeRatio?: number;
+  rushProbabilityMin?: number;
   sortBy?: string;
   sortDir?: string;
   pageNo?: number;
@@ -229,6 +236,8 @@ export interface VolunteerChoiceDTO {
   label?: string;
   planCount?: number;
   tuition?: number;
+  subjectRequirementText?: string;
+  planStatus?: string;
   lastYearMinRank?: number;
   predictedRank?: number;
   batch?: AdmissionBatch;

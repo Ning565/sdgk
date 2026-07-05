@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { useCandidateStore } from '@/stores/candidate';
 import { PageHeader } from '@gaokao/shared-ui';
 import { ElMessage } from 'element-plus';
 
 const store = useCandidateStore();
+const router = useRouter();
 const formRef = ref();
 const isEditing = ref(false);
 
@@ -22,7 +24,7 @@ const form = reactive({
   excludedMajors: [] as string[],
   tuitionMax: undefined as number | undefined,
   schoolNature: 'UNLIMITED' as 'PUBLIC' | 'PRIVATE' | 'UNLIMITED',
-  acceptJointProgram: false,
+  jointProgramPreference: 'UNLIMITED' as 'UNLIMITED' | 'ACCEPT' | 'REJECT',
 });
 
 const subjectOptions = [
@@ -39,6 +41,12 @@ const schoolNatureOptions = [
   { label: '公办', value: 'PUBLIC' },
   { label: '民办', value: 'PRIVATE' },
   { label: '不限', value: 'UNLIMITED' },
+];
+
+const jointProgramOptions = [
+  { label: '不限', value: 'UNLIMITED' },
+  { label: '接受中外合作', value: 'ACCEPT' },
+  { label: '不接受中外合作', value: 'REJECT' },
 ];
 
 const regionOptions = [
@@ -91,9 +99,19 @@ onMounted(async () => {
     form.excludedMajors = p.excludedMajors ?? [];
     form.tuitionMax = p.tuitionMax;
     form.schoolNature = p.schoolNature ?? 'UNLIMITED';
-    form.acceptJointProgram = p.acceptJointProgram ?? false;
+    form.jointProgramPreference = p.acceptJointProgram == null ? 'UNLIMITED' : p.acceptJointProgram ? 'ACCEPT' : 'REJECT';
   }
 });
+
+function toProfilePayload() {
+  return {
+    ...form,
+    acceptJointProgram: form.jointProgramPreference === 'UNLIMITED'
+      ? undefined
+      : form.jointProgramPreference === 'ACCEPT',
+    jointProgramPreference: undefined,
+  };
+}
 
 async function handleResolveRank() {
   if (!form.score || form.score <= 0) return;
@@ -121,13 +139,33 @@ async function handleSave() {
   }
 
   try {
-    await store.updateProfile(form.year, form);
+    await store.updateProfile(form.year, toProfilePayload());
     ElMessage.success('保存成功');
     isEditing.value = false;
   } catch (err: unknown) {
     const msg = (err instanceof Error) ? err.message : '保存失败';
     ElMessage.error(msg);
   }
+}
+
+async function handleStartRecommendation() {
+  if (isEditing.value || !store.candidateProfile) {
+    const valid = await formRef.value?.validate().catch(() => false);
+    if (!valid) return;
+    if (!form.rank || form.rank <= 0) {
+      ElMessage.warning('请先输入分数并查询位次，或手动填写排名');
+      return;
+    }
+    try {
+      await store.updateProfile(form.year, toProfilePayload());
+      isEditing.value = false;
+    } catch (err: unknown) {
+      const msg = (err instanceof Error) ? err.message : '保存失败';
+      ElMessage.error(msg);
+      return;
+    }
+  }
+  await router.push({ path: '/recommendations', query: { auto: '1' } });
 }
 </script>
 
@@ -156,9 +194,12 @@ async function handleSave() {
           <el-descriptions-item label="院校性质">
             {{ store.candidateProfile.schoolNature === 'PUBLIC' ? '公办' : store.candidateProfile.schoolNature === 'PRIVATE' ? '民办' : '不限' }}
           </el-descriptions-item>
-          <el-descriptions-item label="中外合作">{{ store.candidateProfile.acceptJointProgram ? '接受' : '不接受' }}</el-descriptions-item>
+          <el-descriptions-item label="中外合作">
+            {{ store.candidateProfile.acceptJointProgram == null ? '不限' : store.candidateProfile.acceptJointProgram ? '接受' : '不接受' }}
+          </el-descriptions-item>
         </el-descriptions>
         <div class="candidate-card__actions">
+          <el-button type="primary" @click="handleStartRecommendation">智能推荐</el-button>
           <el-button type="primary" @click="isEditing = true">修改信息</el-button>
         </div>
       </template>
@@ -229,7 +270,9 @@ async function handleSave() {
             </el-col>
             <el-col :span="12">
               <el-form-item label="中外合作">
-                <el-switch v-model="form.acceptJointProgram" />
+                <el-select v-model="form.jointProgramPreference" class="w-full">
+                  <el-option v-for="o in jointProgramOptions" :key="String(o.value)" :label="o.label" :value="o.value" />
+                </el-select>
               </el-form-item>
             </el-col>
           </el-row>
@@ -264,6 +307,7 @@ async function handleSave() {
 
           <el-form-item>
             <el-button type="primary" @click="handleSave">保存</el-button>
+            <el-button type="success" @click="handleStartRecommendation">保存并智能推荐</el-button>
             <el-button v-if="store.candidateProfile" @click="isEditing = false">取消</el-button>
           </el-form-item>
         </el-form>

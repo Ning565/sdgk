@@ -111,6 +111,27 @@ public class RecommendationRequest {
     /** 冲稳保标签筛选: 冲/稳/保 */
     private String label;
 
+    // ==================== 组合推荐参数 ====================
+
+    /** 组合推荐返回数量；为空时使用默认推荐数量 */
+    @Min(1)
+    @Max(10000)
+    private Integer recommendationCount;
+
+    /** 冲刺推荐比例，0-1；为空时使用默认比例 */
+    private BigDecimal rushRatio;
+
+    /** 稳妥推荐比例，0-1；为空时使用默认比例 */
+    private BigDecimal stableRatio;
+
+    /** 保底推荐比例，0-1；为空时使用默认比例 */
+    private BigDecimal safeRatio;
+
+    /** 冲刺推荐最低概率；默认 20 */
+    @Min(0)
+    @Max(100)
+    private BigDecimal rushProbabilityMin;
+
     // ==================== 排序与分页 ====================
 
     /** 排序字段: probability / rankDiff / lastYearMinRank / planCount / tuition */
@@ -125,7 +146,7 @@ public class RecommendationRequest {
 
     /** 每页数量 */
     @Min(1)
-    @Max(200)
+    @Max(10000)
     private Integer pageSize = 20;
 
     // ==================== 选科参数 ====================

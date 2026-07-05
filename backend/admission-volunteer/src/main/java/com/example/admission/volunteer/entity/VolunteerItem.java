@@ -36,6 +36,8 @@ public class VolunteerItem {
     private String label;
     private Integer planCount;
     private BigDecimal tuition;
+    private String subjectRequirementText;
+    private String planStatus;
     private Integer lastYearMinRank;
     private Integer predictedRank;
 

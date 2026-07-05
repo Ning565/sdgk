@@ -87,8 +87,16 @@ public class VolunteerCheckService {
         // 4. 获取招生计划映射
         List<Long> planIds = items.stream().map(VolunteerItem::getPlanId).distinct().toList();
         List<EnrollmentPlan> plans = enrollmentPlanService.listPlansByIds(planIds);
+        Set<Long> databasePlanIds = plans.stream()
+                .map(EnrollmentPlan::getId)
+                .collect(Collectors.toSet());
         Map<Long, EnrollmentPlan> planMap = plans.stream()
                 .collect(Collectors.toMap(EnrollmentPlan::getId, p -> p, (a, b) -> a));
+        for (VolunteerItem item : items) {
+            if (item.getPlanId() != null && !planMap.containsKey(item.getPlanId()) && hasPlanRuleSnapshot(item)) {
+                planMap.put(item.getPlanId(), planFromSnapshot(item));
+            }
+        }
 
         // 5. 获取预测标签映射（尝试加载）
         Map<Long, String> predictionLabelMap = loadPredictionLabels(userId, planIds);
@@ -118,6 +126,11 @@ public class VolunteerCheckService {
 
         // 9. 遍历规则
         List<VolunteerCheckIssue> allIssues = new ArrayList<>();
+        for (VolunteerItem item : items) {
+            if (!databasePlanIds.contains(item.getPlanId()) && isBlank(item.getSubjectRequirementText())) {
+                allIssues.add(buildSnapshotMissingIssue(item, checkRun.getId(), formId, now));
+            }
+        }
         for (VolunteerCheckRule rule : rules) {
             if (!rule.supports(ctx)) continue;
 
@@ -290,5 +303,51 @@ public class VolunteerCheckService {
             log.debug("Failed to load prediction labels: {}", e.getMessage());
             return java.util.Collections.emptyMap();
         }
+    }
+
+    private static boolean hasPlanRuleSnapshot(VolunteerItem item) {
+        return item.getSchoolName() != null
+                || item.getMajorName() != null
+                || item.getSubjectRequirementText() != null
+                || item.getPlanStatus() != null
+                || item.getTuition() != null;
+    }
+
+    private static VolunteerCheckIssue buildSnapshotMissingIssue(VolunteerItem item, Long checkRunId,
+                                                                  Long formId, LocalDateTime now) {
+        VolunteerCheckIssue issue = new VolunteerCheckIssue();
+        issue.setCheckRunId(checkRunId);
+        issue.setFormId(formId);
+        issue.setItemId(item.getId());
+        issue.setPlanId(item.getPlanId());
+        issue.setSortOrder(item.getSortOrder());
+        issue.setRuleCode("PLAN_RULE_SNAPSHOT_MISSING");
+        issue.setLevel(VolunteerCheckRule.CheckLevel.ERROR.name());
+        issue.setMessage("该志愿项缺少招生计划规则快照，无法完成选科/停招等强规则检查");
+        issue.setSuggestion("请从最新智能推荐列表重新加入该专业后再检查");
+        issue.setCreatedAt(now);
+        return issue;
+    }
+
+    private static EnrollmentPlan planFromSnapshot(VolunteerItem item) {
+        EnrollmentPlan plan = new EnrollmentPlan();
+        plan.setId(item.getPlanId());
+        plan.setSchoolId(item.getSchoolId());
+        plan.setSchoolCode(item.getSchoolCode());
+        plan.setSchoolName(item.getSchoolName());
+        plan.setMajorCode(item.getMajorCode());
+        plan.setMajorName(item.getMajorName());
+        plan.setEnrollmentType(item.getEnrollmentType());
+        plan.setPlanCount(item.getPlanCount());
+        plan.setTuition(item.getTuition());
+        plan.setSubjectRequirementText(item.getSubjectRequirementText());
+        plan.setPlanStatus(item.getPlanStatus() == null || item.getPlanStatus().isBlank()
+                ? "ACTIVE"
+                : item.getPlanStatus());
+        return plan;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

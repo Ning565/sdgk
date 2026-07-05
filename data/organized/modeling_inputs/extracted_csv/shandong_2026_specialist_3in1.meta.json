@@ -1,0 +1,13 @@
+{
+  "source": "data/2023-2026投档表专科.xlsx",
+  "output": "data/organized/modeling_inputs/extracted_csv/shandong_2026_specialist_3in1.csv",
+  "source_rows": 13910,
+  "output_rows": 13910,
+  "sheet": "山东专科",
+  "header_row": 2,
+  "rules": [
+    "以2026招生计划列为准，仅保留年份=2026、专业层次含专科、计划人数>0的院校专业行。",
+    "2025/2024/2023历史录取列按原宽表顺序保留，供训练脚本识别为无后缀/.1/.2。",
+    "空白历史列表示该年该专业无招生或无可用投档记录，不做补零。"
+  ]
+}

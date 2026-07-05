@@ -57,11 +57,14 @@ public class RecommendationService {
     /** 教育层次常量 */
     private static final String EDU_UNDERGRADUATE = "UNDERGRADUATE";
     private static final String EDU_SPECIALIZED = "SPECIALIZED";
+    private static final String EDU_UNLIMITED = "UNLIMITED";
 
     /** 招生计划数据类型 */
     private static final String DATA_TYPE_PLAN = "PLAN";
     /** 历史录取数据类型 */
     private static final String DATA_TYPE_HISTORY = "HISTORY";
+    /** 单次推荐查询允许返回的最大专业数 */
+    private static final int MAX_PAGE_SIZE = 10_000;
 
     /**
      * 执行推荐搜索.
@@ -75,6 +78,10 @@ public class RecommendationService {
         // 0. 参数校验与标准化
         validateAndNormalize(req);
 
+        if (EDU_UNLIMITED.equals(req.getEducationLevel())) {
+            return searchUnlimited(req, userId);
+        }
+
         if (EDU_SPECIALIZED.equals(req.getEducationLevel())
                 && req.getYear() != null
                 && req.getYear() == 2026
@@ -82,6 +89,10 @@ public class RecommendationService {
             return specializedModelRecommendationService.search(req);
         }
 
+        return searchDatabase(req, userId);
+    }
+
+    private RecommendationResponse searchDatabase(RecommendationRequest req, Long userId) {
         // 1. 获取当前生效的数据版本
         ActiveDataVersion planVersion = dataVersionService.getActiveVersion(DATA_TYPE_PLAN, req.getYear());
         if (planVersion == null) {
@@ -157,6 +168,137 @@ public class RecommendationService {
                 .build();
     }
 
+    private RecommendationResponse searchUnlimited(RecommendationRequest req, Long userId) {
+        List<PlanRecommendationResponse> allPlans = new ArrayList<>();
+        long totalPlans = 0;
+        String planDataVersion = null;
+        String historyDataVersion = null;
+        String modelVersion = null;
+
+        if (req.getYear() != null
+                && req.getYear() == 2026
+                && specializedModelRecommendationService.isAvailable()) {
+            RecommendationRequest specializedReq = copyRequest(req);
+            specializedReq.setEducationLevel(EDU_SPECIALIZED);
+            RecommendationResponse specialized = specializedModelRecommendationService.search(specializedReq);
+            allPlans.addAll(flattenPlans(specialized));
+            totalPlans += specialized.getTotalPlans();
+            planDataVersion = specialized.getPlanDataVersion();
+            historyDataVersion = specialized.getHistoryDataVersion();
+            modelVersion = specialized.getModelVersion();
+        }
+
+        try {
+            RecommendationRequest undergraduateReq = copyRequest(req);
+            undergraduateReq.setEducationLevel(EDU_UNDERGRADUATE);
+            RecommendationResponse undergraduate = searchDatabase(undergraduateReq, userId);
+            allPlans.addAll(flattenPlans(undergraduate));
+            totalPlans += undergraduate.getTotalPlans();
+            planDataVersion = joinVersion(planDataVersion, undergraduate.getPlanDataVersion());
+            historyDataVersion = joinVersion(historyDataVersion, undergraduate.getHistoryDataVersion());
+            modelVersion = joinVersion(modelVersion, undergraduate.getModelVersion());
+        } catch (BusinessException e) {
+            if (!ErrorCode.DATA_NOT_FOUND.equals(e.getErrorCode())) {
+                throw e;
+            }
+            log.warn("Undergraduate recommendation skipped for unlimited search: {}", e.getMessage());
+        }
+
+        Comparator<PlanRecommendationResponse> comparator = Comparator
+                .comparing(PlanRecommendationResponse::getProbability,
+                        Comparator.nullsLast(BigDecimal::compareTo))
+                .reversed()
+                .thenComparing(PlanRecommendationResponse::getSchoolName,
+                        Comparator.nullsLast(String::compareTo));
+        allPlans.sort(comparator);
+
+        int pageNo = req.getPageNo() == null || req.getPageNo() < 1 ? 1 : req.getPageNo();
+        int pageSize = req.getRecommendationCount() != null ? req.getRecommendationCount() : req.getPageSize();
+        pageSize = Math.max(1, Math.min(MAX_PAGE_SIZE, pageSize));
+        int from = Math.min((pageNo - 1) * pageSize, allPlans.size());
+        int to = Math.min(from + pageSize, allPlans.size());
+        List<PlanRecommendationResponse> page = new ArrayList<>(allPlans.subList(from, to));
+
+        List<SchoolGroupResponse> schoolGroups = SchoolGrouper.group(page, req.getSortBy(), req.getSortDir());
+        int totalSchools = (int) allPlans.stream()
+                .map(PlanRecommendationResponse::getSchoolId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .count();
+
+        return RecommendationResponse.builder()
+                .schoolGroups(schoolGroups)
+                .totalPlans(totalPlans)
+                .totalSchools(totalSchools)
+                .planDataVersion(planDataVersion)
+                .historyDataVersion(historyDataVersion)
+                .modelVersion(modelVersion)
+                .updatedAt(Instant.now())
+                .traceId(TraceContext.getTraceId())
+                .build();
+    }
+
+    private static List<PlanRecommendationResponse> flattenPlans(RecommendationResponse response) {
+        if (response == null || response.getSchoolGroups() == null) {
+            return List.of();
+        }
+        return response.getSchoolGroups().stream()
+                .filter(Objects::nonNull)
+                .flatMap(group -> group.getPlans().stream())
+                .collect(Collectors.toList());
+    }
+
+    private static String joinVersion(String left, String right) {
+        if (left == null || left.isBlank()) {
+            return right;
+        }
+        if (right == null || right.isBlank() || left.contains(right)) {
+            return left;
+        }
+        return left + "+" + right;
+    }
+
+    private static RecommendationRequest copyRequest(RecommendationRequest source) {
+        RecommendationRequest target = new RecommendationRequest();
+        target.setYear(source.getYear());
+        target.setEducationLevel(source.getEducationLevel());
+        target.setScore(source.getScore());
+        target.setRank(source.getRank());
+        target.setSubjects(source.getSubjects());
+        target.setKeyword(source.getKeyword());
+        target.setProvince(source.getProvince());
+        target.setCity(source.getCity());
+        target.setSchoolType(source.getSchoolType());
+        target.setSchoolTag(source.getSchoolTag());
+        target.setMajorCategory(source.getMajorCategory());
+        target.setMajorSubcategory(source.getMajorSubcategory());
+        target.setEnrollmentType(source.getEnrollmentType());
+        target.setCampusCode(source.getCampusCode());
+        target.setExcludeMajorCategory(source.getExcludeMajorCategory());
+        target.setExcludeMajorSubcategory(source.getExcludeMajorSubcategory());
+        target.setExcludeSinoForeign(source.getExcludeSinoForeign());
+        target.setExcludeSchoolEnterprise(source.getExcludeSchoolEnterprise());
+        target.setTuitionMin(source.getTuitionMin());
+        target.setTuitionMax(source.getTuitionMax());
+        target.setPlanCountMin(source.getPlanCountMin());
+        target.setPlanCountMax(source.getPlanCountMax());
+        target.setMinRankMax(source.getMinRankMax());
+        target.setProbabilityMin(source.getProbabilityMin());
+        target.setProbabilityMax(source.getProbabilityMax());
+        target.setLabel(source.getLabel());
+        target.setRecommendationCount(source.getRecommendationCount());
+        target.setRushRatio(source.getRushRatio());
+        target.setStableRatio(source.getStableRatio());
+        target.setSafeRatio(source.getSafeRatio());
+        target.setRushProbabilityMin(source.getRushProbabilityMin());
+        target.setSortBy(source.getSortBy());
+        target.setSortDir(source.getSortDir());
+        target.setPageNo(source.getPageNo());
+        target.setPageSize(source.getPageSize());
+        target.setSubjectComboIndex(source.getSubjectComboIndex());
+        return target;
+    }
+
     /**
      * 校验并标准化请求参数.
      */
@@ -176,6 +318,8 @@ public class RecommendationService {
             req.setEducationLevel(EDU_UNDERGRADUATE);
         } else if (edu.startsWith("专科") || edu.equals("SPECIALIZED") || edu.equals("VOCATIONAL") || edu.equals("ZHUANKE")) {
             req.setEducationLevel(EDU_SPECIALIZED);
+        } else if (edu.startsWith("不限") || edu.equals("UNLIMITED") || edu.equals("ALL")) {
+            req.setEducationLevel(EDU_UNLIMITED);
         }
 
         // 校验排序字段
@@ -205,8 +349,31 @@ public class RecommendationService {
         if (req.getPageSize() == null || req.getPageSize() < 1) {
             req.setPageSize(20);
         }
-        if (req.getPageSize() > 200) {
-            req.setPageSize(200);
+        if (req.getPageSize() > MAX_PAGE_SIZE) {
+            req.setPageSize(MAX_PAGE_SIZE);
+        }
+
+        validatePortfolioRatios(req);
+    }
+
+    private void validatePortfolioRatios(RecommendationRequest req) {
+        boolean hasPortfolioRatio = req.getRushRatio() != null
+                || req.getStableRatio() != null
+                || req.getSafeRatio() != null;
+        if (!hasPortfolioRatio) {
+            return;
+        }
+        BigDecimal rush = req.getRushRatio() == null ? BigDecimal.ZERO : req.getRushRatio();
+        BigDecimal stable = req.getStableRatio() == null ? BigDecimal.ZERO : req.getStableRatio();
+        BigDecimal safe = req.getSafeRatio() == null ? BigDecimal.ZERO : req.getSafeRatio();
+        if (rush.compareTo(BigDecimal.ZERO) < 0
+                || stable.compareTo(BigDecimal.ZERO) < 0
+                || safe.compareTo(BigDecimal.ZERO) < 0) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "冲稳保比例不能小于 0");
+        }
+        BigDecimal total = rush.add(stable).add(safe);
+        if (total.compareTo(BigDecimal.ONE) != 0) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "冲、稳、保比例相加必须等于 100%");
         }
     }
 

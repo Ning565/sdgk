@@ -310,6 +310,8 @@ public class VolunteerFormService {
             item.setMajorCode(defaultIfBlank(item.getMajorCode(), plan.getMajorCode()));
             item.setPlanCount(item.getPlanCount() != null ? item.getPlanCount() : plan.getPlanCount());
             item.setTuition(item.getTuition() != null ? item.getTuition() : plan.getTuition());
+            item.setSubjectRequirementText(defaultIfBlank(item.getSubjectRequirementText(), plan.getSubjectRequirementText()));
+            item.setPlanStatus(defaultIfBlank(item.getPlanStatus(), plan.getPlanStatus()));
         }
         item.setSortOrder(newSortOrder);
         item.setAddedAt(LocalDateTime.now());
@@ -348,6 +350,8 @@ public class VolunteerFormService {
         item.setLabel(request.getLabel());
         item.setPlanCount(request.getPlanCount());
         item.setTuition(request.getTuition());
+        item.setSubjectRequirementText(request.getSubjectRequirementText());
+        item.setPlanStatus(request.getPlanStatus());
         item.setLastYearMinRank(request.getLastYearMinRank());
         item.setPredictedRank(request.getPredictedRank());
     }
@@ -366,6 +370,8 @@ public class VolunteerFormService {
         target.setLabel(source.getLabel());
         target.setPlanCount(source.getPlanCount());
         target.setTuition(source.getTuition());
+        target.setSubjectRequirementText(source.getSubjectRequirementText());
+        target.setPlanStatus(source.getPlanStatus());
         target.setLastYearMinRank(source.getLastYearMinRank());
         target.setPredictedRank(source.getPredictedRank());
     }
@@ -640,11 +646,15 @@ public class VolunteerFormService {
     private VolunteerFormDetailResponse.VolunteerItemResponse toItemResponse(VolunteerItem item) {
         String schoolName = item.getSchoolName();
         String majorName = item.getMajorName();
+        String subjectRequirementText = item.getSubjectRequirementText();
+        String planStatus = item.getPlanStatus();
         try {
             EnrollmentPlan plan = enrollmentPlanService.getPlanById(item.getPlanId());
             if (plan != null) {
                 schoolName = defaultIfBlank(schoolName, plan.getSchoolName());
                 majorName = defaultIfBlank(majorName, plan.getMajorName());
+                subjectRequirementText = defaultIfBlank(subjectRequirementText, plan.getSubjectRequirementText());
+                planStatus = defaultIfBlank(planStatus, plan.getPlanStatus());
             }
         } catch (Exception e) {
             log.debug("Failed to load plan info for planId={}: {}", item.getPlanId(), e.getMessage());
@@ -665,6 +675,8 @@ public class VolunteerFormService {
                 .label(item.getLabel())
                 .planCount(item.getPlanCount())
                 .tuition(item.getTuition())
+                .subjectRequirementText(subjectRequirementText)
+                .planStatus(planStatus)
                 .lastYearMinRank(item.getLastYearMinRank())
                 .predictedRank(item.getPredictedRank())
                 .sortOrder(item.getSortOrder())

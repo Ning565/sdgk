@@ -11,6 +11,7 @@ const navItems = [
   { path: '/candidate', label: '考生信息' },
   { path: '/recommendations', label: '智能推荐' },
   { path: '/volunteer-forms', label: '我的志愿表' },
+  { path: '/help', label: '使用说明' },
 ];
 
 function handleLogout() {

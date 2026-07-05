@@ -31,7 +31,7 @@ OUT_DIR = ROOT / "data/organized/modeling_outputs"
 OUT_CSV = OUT_DIR / "specialized_rank_model_2026.csv"
 OUT_META = OUT_DIR / "specialized_rank_model_2026.meta.json"
 
-MODEL_VERSION = "specialized-rank-v1-pre"
+MODEL_VERSION = "specialized-rank-v2-specialist-workbook"
 
 
 HOT_MAJOR_PATTERNS = {
@@ -324,7 +324,7 @@ def main() -> None:
                 "risk_tips": "；".join(risk[:3]),
                 "reason_text": "；".join(reasons[:4]),
                 "model_version": MODEL_VERSION,
-                "source": "shandong_2026_specialist_3in1",
+                "source": "2023-2026投档表专科.xlsx",
             }
         )
 
@@ -338,10 +338,11 @@ def main() -> None:
         "output": str(OUT_CSV.relative_to(ROOT)),
         "row_count": int(len(out)),
         "assumptions": str(ASSUMPTIONS.relative_to(ROOT)),
-        "probability_runtime": "Java computes candidate-specific probability from p10/p50/p90 and clamps to 10..99.99",
+        "probability_runtime": "Java computes candidate-specific probability from p10/p50/p90 and clamps to 1..99.99",
         "notes": [
             "本科第1次录取后剩余考生流尚无真实观测，当前只使用扩招情景参数。",
-            "专科三表合一为主数据源，EOL/官网后续作为校验源。",
+            "专科模型以 data/2023-2026投档表专科.xlsx 转换后的宽表为主数据源。",
+            "历史列为空表示该年该院校专业无招生或无可用投档记录，不按0处理。",
         ],
     }
     OUT_META.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")

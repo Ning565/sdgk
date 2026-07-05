@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useCandidateStore } from '@/stores/candidate';
 import { useVolunteerStore, type SchoolGroup } from '@/stores/volunteer';
@@ -14,12 +14,39 @@ const keyword = ref('');
 const levelFilter = ref('');
 const expandedSchools = ref<Set<number>>(new Set());
 const addingPlanIds = ref<Set<number>>(new Set());
+const recommendationSettings = ref({
+  count: 96,
+  rushPercent: 25,
+  stablePercent: 33,
+  safePercent: 42,
+  rushProbabilityMin: 20,
+});
+const serverRecommendationLimit = 10000;
+const ratioTotal = computed(() =>
+  Number(recommendationSettings.value.rushPercent || 0) +
+  Number(recommendationSettings.value.stablePercent || 0) +
+  Number(recommendationSettings.value.safePercent || 0)
+);
+const ratioIsValid = computed(() => ratioTotal.value === 100);
+const maxRecommendationCount = computed(() => {
+  const total = volunteerStore.recResult?.totalPlans;
+  if (typeof total === 'number' && total > 0) {
+    return Math.min(total, serverRecommendationLimit);
+  }
+  return serverRecommendationLimit;
+});
 const specialistMajorCategories = new Set([
   '交通运输大类', '公共管理与服务大类', '公安与司法大类', '农林牧渔大类', '医药卫生大类',
   '土木建筑大类', '教育与体育大类', '文化艺术大类', '新闻传播大类', '旅游大类',
   '水利大类', '生物与化工大类', '电子与信息大类', '能源动力与材料大类', '装备制造大类',
   '财经商贸大类', '资源环境与安全大类', '轻工纺织大类', '食品药品与粮食大类',
 ]);
+
+function schoolTypeFilter(value?: string) {
+  if (value === 'PUBLIC') return ['公办'];
+  if (value === 'PRIVATE') return ['民办'];
+  return undefined;
+}
 
 function splitMajorPrefs(values?: string[]) {
   const selected = values || [];
@@ -34,15 +61,28 @@ const schoolGroups = computed(() => {
   let groups = volunteerStore.recResult.schoolGroups;
   if (keyword.value) {
     const kw = keyword.value.toLowerCase();
-    groups = groups.filter(g =>
-      g.schoolName.toLowerCase().includes(kw) ||
-      g.plans.some(p => p.majorName.toLowerCase().includes(kw))
-    );
+    groups = groups
+      .map(g => {
+        const schoolMatched = g.schoolName.toLowerCase().includes(kw);
+        const plans = schoolMatched ? g.plans : g.plans.filter(p => p.majorName.toLowerCase().includes(kw));
+        return { ...g, plans, eligiblePlanCount: plans.length };
+      })
+      .filter(g => g.plans.length > 0);
   }
   if (levelFilter.value) {
-    groups = groups.filter(g =>
-      g.plans.some(p => p.label === levelFilter.value)
-    );
+    groups = groups
+      .map(g => {
+        const plans = g.plans.filter(p => p.label === levelFilter.value);
+        const probabilities = plans.map(p => p.probability).filter((p): p is number => p != null);
+        return {
+          ...g,
+          plans,
+          eligiblePlanCount: plans.length,
+          minProbability: probabilities.length ? Math.min(...probabilities) : undefined,
+          maxProbability: probabilities.length ? Math.max(...probabilities) : undefined,
+        };
+      })
+      .filter(g => g.plans.length > 0);
   }
   return groups;
 });
@@ -51,6 +91,45 @@ const currentFormItems = computed(() => volunteerStore.currentForm?.items || vol
 const addedPlanIds = computed(() => new Set(currentFormItems.value.map(item => item.planId).filter(Boolean)));
 const currentFormName = computed(() => volunteerStore.currentForm?.name || '当前志愿表');
 const currentFormCount = computed(() => volunteerStore.currentForm?.itemCount ?? currentFormItems.value.length);
+
+watch(
+  () => recommendationSettings.value.count,
+  value => {
+    if (Number(value) > maxRecommendationCount.value) {
+      recommendationSettings.value.count = maxRecommendationCount.value;
+      ElMessage.warning(`当前筛选条件最多可推荐 ${formatCount(maxRecommendationCount.value)} 个专业`);
+    }
+  }
+);
+
+function formatCount(value: number) {
+  return value.toLocaleString('zh-CN');
+}
+
+function errorMessage(err: unknown) {
+  return err instanceof Error ? err.message : '刷新推荐失败';
+}
+
+function normalizedRecommendationCount(notify = false) {
+  const value = Number(recommendationSettings.value.count || 0);
+  if (!Number.isFinite(value) || value < 1) {
+    if (notify) ElMessage.warning('推荐数量至少为 1');
+    return null;
+  }
+  const count = Math.floor(value);
+  const max = maxRecommendationCount.value;
+  if (count > max) {
+    recommendationSettings.value.count = max;
+    if (notify) {
+      ElMessage.warning(`当前筛选条件最多可推荐 ${formatCount(max)} 个专业`);
+    }
+    return null;
+  }
+  if (count !== value) {
+    recommendationSettings.value.count = count;
+  }
+  return count;
+}
 
 function toggleSchool(schoolId: number) {
   const s = new Set(expandedSchools.value);
@@ -96,15 +175,18 @@ async function runPrediction() {
   } catch { /* prediction optional */ }
 }
 
-onMounted(async () => {
+async function fetchSmartRecommendations() {
   if (!candidateStore.candidateProfile) {
     await candidateStore.fetchProfile(currentYear);
   }
   if (candidateStore.candidateProfile) {
     const p = candidateStore.candidateProfile;
+    const recommendationCount = normalizedRecommendationCount();
+    if (!recommendationCount) return;
     await volunteerStore.ensureActiveForm(p.year || currentYear).catch(() => undefined);
     const preferred = splitMajorPrefs(p.preferredMajors);
     const excluded = splitMajorPrefs(p.excludedMajors);
+    const schoolType = schoolTypeFilter(p.schoolNature);
     await volunteerStore.fetchRecommendations({
       year: p.year || currentYear,
       educationLevel: p.educationLevel,
@@ -117,12 +199,39 @@ onMounted(async () => {
       majorSubcategory: preferred.subcategories,
       excludeMajorCategory: excluded.categories,
       excludeMajorSubcategory: excluded.subcategories,
+      tuitionMax: p.tuitionMax,
+      schoolType,
+      excludeSinoForeign: p.acceptJointProgram === false ? true : undefined,
       pageNo: 1,
-      pageSize: 200,
+      pageSize: recommendationCount,
+      recommendationCount,
+      rushRatio: recommendationSettings.value.rushPercent / 100,
+      stableRatio: recommendationSettings.value.stablePercent / 100,
+      safeRatio: recommendationSettings.value.safePercent / 100,
+      rushProbabilityMin: recommendationSettings.value.rushProbabilityMin,
     });
-    // Run prediction to fill 冲/稳/保 labels
     await runPrediction();
   }
+}
+
+async function applyRecommendationSettings() {
+  if (!normalizedRecommendationCount(true)) {
+    return;
+  }
+  if (!ratioIsValid.value) {
+    ElMessage.warning('冲、稳、保比例相加必须等于 100%');
+    return;
+  }
+  try {
+    await fetchSmartRecommendations();
+    ElMessage.success('已按新的推荐设置刷新');
+  } catch (err: unknown) {
+    ElMessage.error(errorMessage(err));
+  }
+}
+
+onMounted(async () => {
+  await fetchSmartRecommendations();
 });
 
 async function addToVolunteer(plan: any, school: SchoolGroup) {
@@ -207,6 +316,38 @@ function labelType(label?: string) {
         <el-radio-button value="稳">🎯 稳妥</el-radio-button>
         <el-radio-button value="保">🛡 保底</el-radio-button>
       </el-radio-group>
+    </div>
+
+    <div class="rec-settings" v-if="candidateStore.candidateProfile">
+      <div class="rec-settings__field rec-settings__count">
+        <span class="rec-settings__label">推荐数量</span>
+        <el-input-number v-model="recommendationSettings.count" :min="1" :max="serverRecommendationLimit" :step="6" controls-position="right" />
+        <span class="rec-settings__hint">最多 {{ formatCount(maxRecommendationCount) }}</span>
+      </div>
+      <div class="rec-settings__field">
+        <span class="rec-settings__label">冲</span>
+        <el-input-number v-model="recommendationSettings.rushPercent" :min="0" :max="100" :step="5" controls-position="right" />
+        <span class="rec-settings__unit">%</span>
+      </div>
+      <div class="rec-settings__field">
+        <span class="rec-settings__label">稳</span>
+        <el-input-number v-model="recommendationSettings.stablePercent" :min="0" :max="100" :step="5" controls-position="right" />
+        <span class="rec-settings__unit">%</span>
+      </div>
+      <div class="rec-settings__field">
+        <span class="rec-settings__label">保</span>
+        <el-input-number v-model="recommendationSettings.safePercent" :min="0" :max="100" :step="5" controls-position="right" />
+        <span class="rec-settings__unit">%</span>
+      </div>
+      <div class="rec-settings__field rec-settings__rush-floor">
+        <span class="rec-settings__label">冲刺最低概率</span>
+        <el-input-number v-model="recommendationSettings.rushProbabilityMin" :min="0" :max="50" :step="5" controls-position="right" />
+        <span class="rec-settings__unit">%</span>
+      </div>
+      <div class="rec-settings__total" :class="{ invalid: !ratioIsValid }">
+        合计 {{ ratioTotal }}%
+      </div>
+      <el-button type="primary" :disabled="!ratioIsValid" :loading="volunteerStore.loading" @click="applyRecommendationSettings">刷新推荐</el-button>
     </div>
 
     <!-- Loading -->
@@ -320,6 +461,16 @@ function labelType(label?: string) {
 /* Toolbar */
 .rec-toolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; padding: 16px 20px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
 .rec-search { width: 320px; }
+.rec-settings { display: flex; align-items: center; gap: 12px; margin: -8px 0 20px; padding: 14px 20px; background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.06); flex-wrap: wrap; }
+.rec-settings__field { display: flex; align-items: center; gap: 6px; }
+.rec-settings__label { font-size: 13px; color: #4b5563; white-space: nowrap; }
+.rec-settings__unit { font-size: 13px; color: #9ca3af; }
+.rec-settings__hint { font-size: 12px; color: #9ca3af; white-space: nowrap; }
+.rec-settings__field :deep(.el-input-number) { width: 94px; }
+.rec-settings__count :deep(.el-input-number) { width: 128px; }
+.rec-settings__rush-floor :deep(.el-input-number) { width: 94px; }
+.rec-settings__total { min-width: 78px; font-size: 13px; color: #059669; font-weight: 600; }
+.rec-settings__total.invalid { color: #dc2626; }
 
 /* Loading */
 .rec-loading { text-align: center; padding: 80px 0; color: #9ca3af; }

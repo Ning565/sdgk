@@ -42,9 +42,11 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class SpecializedModelRecommendationService {
 
-    private static final String MODEL_VERSION = "specialized-rank-v1-pre";
-    private static final int MIN_PAGE_SIZE = 96;
-    private static final int MAX_PAGE_SIZE = 500;
+    private static final String MODEL_VERSION = "specialized-rank-v2-specialist-workbook";
+    private static final int MIN_PAGE_SIZE = 1;
+    private static final int MAX_PAGE_SIZE = 10_000;
+    private static final int DEFAULT_RECOMMENDATION_COUNT = 96;
+    private static final BigDecimal DEFAULT_RUSH_PROBABILITY_MIN = BigDecimal.valueOf(20);
 
     @Value("${app.specialized-model.path:data/organized/modeling_outputs/specialized_rank_model_2026.csv}")
     private String modelPath;
@@ -66,6 +68,7 @@ public class SpecializedModelRecommendationService {
                 .filter(plan -> matchesUserFilters(plan, req))
                 .map(plan -> toResponse(plan, candidateRank))
                 .filter(plan -> matchesProbabilityAndLabel(plan, req))
+                .filter(plan -> matchesRushFloor(plan, req))
                 .sorted(comparator(req))
                 .collect(Collectors.toList());
 
@@ -77,10 +80,11 @@ public class SpecializedModelRecommendationService {
                 .count();
 
         int pageNo = req.getPageNo() == null || req.getPageNo() < 1 ? 1 : req.getPageNo();
-        int pageSize = req.getPageSize() == null ? 200 : req.getPageSize();
+        int pageSize = req.getRecommendationCount() != null ? req.getRecommendationCount()
+                : (req.getPageSize() == null ? DEFAULT_RECOMMENDATION_COUNT : req.getPageSize());
         pageSize = Math.max(MIN_PAGE_SIZE, Math.min(MAX_PAGE_SIZE, pageSize));
         if (shouldUsePortfolioMix(req)) {
-            filtered = mixPortfolio(filtered, pageSize);
+            filtered = mixPortfolio(filtered, pageSize, req);
         }
         int from = Math.min((pageNo - 1) * pageSize, filtered.size());
         int to = Math.min(from + pageSize, filtered.size());
@@ -197,7 +201,7 @@ public class SpecializedModelRecommendationService {
             return true;
         }
         if (subjects == null || subjects.isEmpty()) {
-            return true;
+            return false;
         }
         return subjects.containsAll(plan.subjectTokens);
     }
@@ -276,7 +280,17 @@ public class SpecializedModelRecommendationService {
                 && plan.getProbability().compareTo(req.getProbabilityMax()) > 0) {
             return false;
         }
+        if ("冲".equals(req.getLabel()) && plan.getProbability() != null
+                && plan.getProbability().compareTo(rushProbabilityMin(req)) < 0) {
+            return false;
+        }
         return req.getLabel() == null || req.getLabel().isBlank() || req.getLabel().equals(plan.getLabel());
+    }
+
+    private static boolean matchesRushFloor(PlanRecommendationResponse plan, RecommendationRequest req) {
+        return !"冲".equals(plan.getLabel())
+                || plan.getProbability() == null
+                || plan.getProbability().compareTo(rushProbabilityMin(req)) >= 0;
     }
 
     private static PlanRecommendationResponse toResponse(ModelPlan plan, Integer candidateRank) {
@@ -325,7 +339,7 @@ public class SpecializedModelRecommendationService {
         double spread = Math.max(plan.predictedRankP90 - plan.predictedRankP10, plan.predictedRankP50 * 0.08);
         double scale = Math.max(8000.0, spread / 3.2);
         double raw = 100.0 / (1.0 + Math.exp((candidateRank - plan.predictedRankP50) / scale));
-        double clamped = Math.max(10.0, Math.min(99.99, raw));
+        double clamped = Math.max(1.0, Math.min(99.99, raw));
         return BigDecimal.valueOf(clamped).setScale(2, RoundingMode.HALF_UP);
     }
 
@@ -386,12 +400,15 @@ public class SpecializedModelRecommendationService {
     }
 
     private static List<PlanRecommendationResponse> mixPortfolio(List<PlanRecommendationResponse> sorted,
-                                                                  int pageSize) {
-        if (sorted.size() <= MIN_PAGE_SIZE) {
+                                                                  int pageSize,
+                                                                  RecommendationRequest req) {
+        if (sorted.size() <= pageSize) {
             return sorted;
         }
+        BigDecimal rushMin = rushProbabilityMin(req);
         List<PlanRecommendationResponse> rush = sorted.stream()
                 .filter(plan -> "冲".equals(plan.getLabel()))
+                .filter(plan -> plan.getProbability() == null || plan.getProbability().compareTo(rushMin) >= 0)
                 .sorted(Comparator.comparing(PlanRecommendationResponse::getProbability,
                         Comparator.nullsLast(BigDecimal::compareTo)).reversed())
                 .toList();
@@ -407,9 +424,10 @@ public class SpecializedModelRecommendationService {
                 .toList();
 
         int target = Math.min(pageSize, sorted.size());
-        int rushQuota = Math.min(rush.size(), Math.max(12, target / 4));
-        int stableQuota = Math.min(stable.size(), Math.max(24, target / 3));
-        int safeQuota = Math.min(safe.size(), Math.max(24, target - rushQuota - stableQuota));
+        PortfolioRatios ratios = portfolioRatios(req);
+        int rushQuota = Math.min(rush.size(), Math.max(0, (int) Math.round(target * ratios.rush())));
+        int stableQuota = Math.min(stable.size(), Math.max(0, (int) Math.round(target * ratios.stable())));
+        int safeQuota = Math.min(safe.size(), Math.max(0, target - rushQuota - stableQuota));
 
         List<PlanRecommendationResponse> mixed = new ArrayList<>(sorted.size());
         addFirstN(mixed, rush, rushQuota);
@@ -430,6 +448,45 @@ public class SpecializedModelRecommendationService {
             }
         }
         return mixed;
+    }
+
+    private static BigDecimal rushProbabilityMin(RecommendationRequest req) {
+        BigDecimal configured = req.getRushProbabilityMin();
+        if (configured == null) {
+            return DEFAULT_RUSH_PROBABILITY_MIN;
+        }
+        if (configured.compareTo(BigDecimal.ZERO) < 0) {
+            return BigDecimal.ZERO;
+        }
+        if (configured.compareTo(BigDecimal.valueOf(100)) > 0) {
+            return BigDecimal.valueOf(100);
+        }
+        return configured;
+    }
+
+    private static PortfolioRatios portfolioRatios(RecommendationRequest req) {
+        double rush = ratioValue(req.getRushRatio(), 0.25);
+        double stable = ratioValue(req.getStableRatio(), 1.0 / 3.0);
+        double safe = ratioValue(req.getSafeRatio(), 0.0);
+        if (req.getSafeRatio() == null) {
+            safe = Math.max(0.0, 1.0 - rush - stable);
+        }
+        double sum = rush + stable + safe;
+        if (sum <= 0.0) {
+            return new PortfolioRatios(0.25, 1.0 / 3.0, 5.0 / 12.0);
+        }
+        return new PortfolioRatios(rush / sum, stable / sum, safe / sum);
+    }
+
+    private static double ratioValue(BigDecimal value, double fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        double ratio = value.doubleValue();
+        if (Double.isNaN(ratio) || Double.isInfinite(ratio) || ratio < 0.0) {
+            return 0.0;
+        }
+        return Math.min(1.0, ratio);
     }
 
     private static void addFirstN(List<PlanRecommendationResponse> target,
@@ -581,5 +638,8 @@ public class SpecializedModelRecommendationService {
             }
             return tokens;
         }
+    }
+
+    private record PortfolioRatios(double rush, double stable, double safe) {
     }
 }
