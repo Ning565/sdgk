@@ -1,0 +1,54 @@
+# macOS / editor
+.DS_Store
+*.swp
+*.swo
+.idea/
+
+# Local assistant/workspace metadata
+.agents/
+.claude/
+.codex/
+
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Node / frontend
+node_modules/
+dist/
+coverage/
+.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Logs / runtime
+logs/
+*.log
+backend/logs/
+backend/**/logs/
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+application-local.yml
+application-local.yaml
+
+# Local databases and backups
+*.sqlite
+*.sqlite3
+*.db
+codex_migration_backups_*/
+
+# Raw archive bundles
+*.zip
+*.rar
+*.7z
+
+# Office temp files
+~$*

@@ -1,0 +1,25 @@
+{
+  "name": "gaokao-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gaokao volunteer recommendation system frontend monorepo",
+  "scripts": {
+    "dev:user": "pnpm --filter @gaokao/user-web dev",
+    "dev:admin": "pnpm --filter @gaokao/admin-web dev",
+    "build:user": "pnpm --filter @gaokao/user-web build",
+    "build:admin": "pnpm --filter @gaokao/admin-web build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm -r test:e2e"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "eslint-plugin-vue": "^9.33.0"
+  }
+}

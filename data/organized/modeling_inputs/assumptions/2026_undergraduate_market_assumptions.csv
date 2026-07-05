@@ -1,0 +1,7 @@
+﻿metric,value,unit,source,model_usage,confidence
+undergraduate_plan_total_2026,287723,persons,user_provided,本科吸收能力上限/总量假设,medium
+ordinary_class_line_score_2026,442,score,user_provided,一段线资格边界,medium
+ordinary_class_line_reached_2026,355637,persons,user_provided,一段线上人数/本科潜在竞争池,medium
+undergraduate_plan_expansion_total_2026_vs_2025,17294,plans,user_provided,本科扩招对专科高分下沉的缓释项,medium
+sino_foreign_cooperation_expansion_2026_vs_2025,5823,plans,user_provided,中外合作本科扩招对不同支付能力考生的吸收项,medium
+physics_chemistry_special_expansion_2026_vs_2025,13740,plans,user_image_subject_change,物化组合本科计划扩招吸收项,medium

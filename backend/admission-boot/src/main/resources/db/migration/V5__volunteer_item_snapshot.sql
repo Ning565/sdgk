@@ -1,0 +1,16 @@
+ALTER TABLE volunteer_item
+    ADD COLUMN school_id BIGINT DEFAULT NULL AFTER plan_id,
+    ADD COLUMN school_name VARCHAR(200) DEFAULT NULL AFTER school_id,
+    ADD COLUMN school_code VARCHAR(20) DEFAULT NULL AFTER school_name,
+    ADD COLUMN major_name VARCHAR(200) DEFAULT NULL AFTER school_code,
+    ADD COLUMN major_code VARCHAR(50) DEFAULT NULL AFTER major_name,
+    ADD COLUMN province VARCHAR(50) DEFAULT NULL AFTER major_code,
+    ADD COLUMN city VARCHAR(50) DEFAULT NULL AFTER province,
+    ADD COLUMN school_type VARCHAR(50) DEFAULT NULL AFTER city,
+    ADD COLUMN enrollment_type VARCHAR(100) DEFAULT NULL AFTER school_type,
+    ADD COLUMN probability DECIMAL(5,2) DEFAULT NULL AFTER enrollment_type,
+    ADD COLUMN label VARCHAR(10) DEFAULT NULL AFTER probability,
+    ADD COLUMN plan_count INT DEFAULT NULL AFTER label,
+    ADD COLUMN tuition DECIMAL(10,0) DEFAULT NULL AFTER plan_count,
+    ADD COLUMN last_year_min_rank INT DEFAULT NULL AFTER tuition,
+    ADD COLUMN predicted_rank INT DEFAULT NULL AFTER last_year_min_rank;

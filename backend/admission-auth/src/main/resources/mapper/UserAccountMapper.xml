@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.admission.auth.mapper.UserAccountMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.admission.auth.entity.UserAccount">
+        <id column="id" property="id"/>
+        <result column="username" property="username"/>
+        <result column="password_hash" property="passwordHash"/>
+        <result column="mobile_ciphertext" property="mobileCiphertext"/>
+        <result column="mobile_hash" property="mobileHash"/>
+        <result column="mobile_masked" property="mobileMasked"/>
+        <result column="nickname" property="nickname"/>
+        <result column="avatar_url" property="avatarUrl"/>
+        <result column="status" property="status"/>
+        <result column="last_login_at" property="lastLoginAt"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <select id="selectByMobileHash" resultMap="BaseResultMap">
+        SELECT * FROM user_account WHERE mobile_hash = #{hash}
+    </select>
+
+    <select id="selectByUsername" resultMap="BaseResultMap">
+        SELECT * FROM user_account WHERE username = #{username}
+    </select>
+
+</mapper>

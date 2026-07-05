@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.admission.recommendation.mapper.RecommendationMapper">
+    <resultMap id="RecommendationPlanVOMap" type="com.example.admission.recommendation.mapper.RecommendationPlanVO">
+        <id column="plan_id" property="planId"/>
+        <result column="plan_series_id" property="planSeriesId"/><result column="data_version_id" property="dataVersionId"/>
+        <result column="year" property="year"/><result column="school_id" property="schoolId"/>
+        <result column="school_code" property="schoolCode"/><result column="school_name" property="schoolName"/>
+        <result column="major_code" property="majorCode"/><result column="major_name" property="majorName"/>
+        <result column="standard_major_code" property="standardMajorCode"/>
+        <result column="major_category" property="majorCategory"/>
+        <result column="campus_code" property="campusCode"/><result column="campus_name" property="campusName"/>
+        <result column="enrollment_type" property="enrollmentType"/><result column="education_level" property="educationLevel"/>
+        <result column="plan_count" property="planCount"/><result column="tuition" property="tuition"/>
+        <result column="duration" property="duration"/><result column="subject_requirement_text" property="subjectRequirementText"/>
+        <result column="plan_status" property="planStatus"/><result column="eligible_subject_bitmap" property="eligibleSubjectBitmap"/>
+        <result column="province" property="province"/><result column="city" property="city"/>
+        <result column="school_type" property="schoolType"/><result column="school_tag" property="schoolTag"/>
+        <result column="major_subcategory" property="majorSubcategory"/>
+        <result column="last_year_min_rank" property="lastYearMinRank"/><result column="last_year_min_score" property="lastYearMinScore"/>
+        <result column="two_year_min_rank" property="twoYearMinRank"/>
+        <result column="three_year_min_rank" property="threeYearMinRank"/>
+        <result column="last_year_plan_count" property="lastYearPlanCount"/>
+        <result column="probability" property="probability"/><result column="label" property="label"/>
+        <result column="predicted_rank" property="predictedRank"/><result column="rank_range_min" property="rankRangeMin"/>
+        <result column="rank_range_max" property="rankRangeMax"/><result column="model_version" property="modelVersion"/>
+    </resultMap>
+    <sql id="hardFilter">
+        AND ep.data_version_id = #{dataVersionId} AND ep.year = #{req.year} AND ep.plan_status IN ('ACTIVE', 'NEW')
+        <if test="subjectComboIndex != null">AND (ep.eligible_subject_bitmap &amp; (1 &lt;&lt; #{subjectComboIndex})) &lt;&gt; 0</if>
+        <if test="req.educationLevel != null and req.educationLevel != ''">AND ep.education_level = #{req.educationLevel}</if>
+    </sql>
+    <sql id="userFilter">
+        <if test="req.keyword != null and req.keyword != ''">AND (s.name LIKE CONCAT('%', #{req.keyword}, '%') OR ep.major_name LIKE CONCAT('%', #{req.keyword}, '%'))</if>
+        <if test="req.province != null and req.province.size() > 0">AND s.province IN <foreach collection="req.province" item="p" open="(" separator="," close=")">#{p}</foreach></if>
+        <if test="req.tuitionMin != null">AND ep.tuition &gt;= #{req.tuitionMin}</if>
+        <if test="req.tuitionMax != null">AND ep.tuition &lt;= #{req.tuitionMax}</if>
+    </sql>
+    <sql id="orderBy">
+        <choose>
+            <when test="req.sortBy == 'planCount'">ORDER BY ep.plan_count <if test="req.sortDir == 'asc'">ASC</if><if test="req.sortDir != 'asc'">DESC</if></when>
+            <when test="req.sortBy == 'tuition'">ORDER BY ep.tuition <if test="req.sortDir == 'asc'">ASC</if><if test="req.sortDir != 'asc'">DESC</if></when>
+            <otherwise>ORDER BY ep.id DESC</otherwise>
+        </choose>
+    </sql>
+    <select id="searchPlans" resultMap="RecommendationPlanVOMap">
+        SELECT ep.id AS plan_id, ep.plan_series_id, ep.data_version_id, ep.year,
+               ep.school_id, ep.school_code, s.name AS school_name,
+               ep.major_code, ep.major_name, ep.standard_major_code,
+               sm.category_name AS major_category,
+               ep.campus_code, ep.campus_name,
+               ep.enrollment_type_code AS enrollment_type, ep.education_level,
+               ep.plan_count, ep.tuition, ep.duration,
+               ep.subject_requirement_text, ep.plan_status, ep.eligible_subject_bitmap,
+               s.province, s.city, s.school_type, s.school_tag,
+               sm.subcategory_name AS major_subcategory,
+               ep.last_year_min_rank, ep.last_year_min_score, ep.last_year_plan_count, ep.two_year_min_rank, ep.three_year_min_rank,
+               pr.probability, pr.label, pr.predicted_rank_min AS predicted_rank,
+               pr.predicted_rank_min AS rank_range_min, pr.predicted_rank_max AS rank_range_max, pr.model_version
+        FROM enrollment_plan ep
+        INNER JOIN school s ON ep.school_id = s.id
+        LEFT JOIN standard_major sm ON ep.standard_major_code = sm.code
+        LEFT JOIN prediction_result pr ON ep.id = pr.plan_id
+        WHERE 1=1 <include refid="hardFilter"/><include refid="userFilter"/><include refid="orderBy"/>
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="countPlans" resultType="long">
+        SELECT COUNT(1) FROM enrollment_plan ep
+        INNER JOIN school s ON ep.school_id = s.id
+        LEFT JOIN standard_major sm ON ep.standard_major_code = sm.code
+        LEFT JOIN prediction_result pr ON ep.id = pr.plan_id
+        WHERE 1=1 <include refid="hardFilter"/><include refid="userFilter"/>
+    </select>
+</mapper>
