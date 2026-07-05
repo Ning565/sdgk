@@ -40,6 +40,11 @@ def clean(value: object) -> str:
     return "" if value is None else str(value).strip()
 
 
+def fit(value: object, max_length: int) -> str:
+    text = clean(value)
+    return text[:max_length]
+
+
 def sql(value: object) -> str:
     if value is None:
         return "NULL"
@@ -153,12 +158,12 @@ def main() -> None:
         level = normalize_level(clean(row.get("专业层次")))
 
         plan_rows.append([
-            clean(row.get("ID")),
+            fit(row.get("ID"), 50),
             2026,
-            school_code,
+            fit(school_code, 20),
             sm_code,
             major_code(row),
-            clean(row.get("专业全称")) or clean(row.get("专业名称")),
+            fit(row.get("专业全称"), 200) or fit(row.get("专业名称"), 200),
             enrollment_type(row),
             None,
             None,
@@ -166,7 +171,7 @@ def main() -> None:
             int_or_none(row.get("计划人数")) or 0,
             decimal_or_none(row.get("学费")),
             int_or_none(row.get("学制")),
-            clean(row.get("选科要求")) or "不限",
+            fit(row.get("选科要求"), 500) or "不限",
             rule_json,
             bitmap,
             "PARSED",
@@ -199,14 +204,14 @@ def main() -> None:
             clean(row.get("本科/专科")),
         ]))
         school_rows.append([
-            code,
-            clean(row.get("院校名称")),
+            fit(code, 20),
+            fit(row.get("院校名称"), 200),
             None,
-            clean(row.get("所在省")) or None,
-            clean(row.get("城市")) or None,
-            clean(row.get("公私性质")) or clean(row.get("类型")) or None,
-            tags or None,
-            clean(row.get("招生章程")) or None,
+            fit(row.get("所在省"), 50) or None,
+            fit(row.get("城市"), 50) or None,
+            fit(row.get("公私性质"), 50) or fit(row.get("类型"), 50) or None,
+            tags[:200] or None,
+            fit(row.get("招生章程"), 500) or None,
             "ACTIVE",
         ])
 
@@ -222,11 +227,11 @@ def main() -> None:
         level = normalize_level(clean(row.get("专业层次")))
         major_rows.append([
             code,
-            clean(row.get("专业名称")) or clean(row.get("专业全称")) or code,
+            fit(row.get("专业名称"), 200) or fit(row.get("专业全称"), 200) or code,
             None,
-            clean(row.get("门类")) or None,
+            fit(row.get("门类"), 50) or None,
             None,
-            clean(row.get("专业类")) or None,
+            fit(row.get("专业类"), 100) or None,
             level,
         ])
     if major_rows:
