@@ -18,7 +18,7 @@ const form = reactive({
   rank: undefined as number | undefined,
   rankSource: 'AUTO' as 'AUTO' | 'MANUAL',
   subjects: [] as string[],
-  educationLevel: 'VOCATIONAL' as 'UNDERGRADUATE' | 'VOCATIONAL' | 'UNLIMITED',
+  educationLevel: 'UNDERGRADUATE' as 'UNDERGRADUATE' | 'VOCATIONAL' | 'UNLIMITED',
   preferredRegions: [] as string[],
   preferredMajors: [] as string[],
   excludedMajors: [] as string[],
@@ -32,7 +32,9 @@ const subjectOptions = [
 ];
 
 const educationLevelOptions = [
+  { label: '本科', value: 'UNDERGRADUATE' },
   { label: '专科', value: 'VOCATIONAL' },
+  { label: '不限', value: 'UNLIMITED' },
 ];
 
 const schoolNatureOptions = [
@@ -91,7 +93,7 @@ onMounted(async () => {
     form.rank = p.rank;
     form.rankSource = p.rankSource ?? 'AUTO';
     form.subjects = p.subjects ?? [];
-    form.educationLevel = 'VOCATIONAL';
+    form.educationLevel = p.educationLevel ?? 'UNDERGRADUATE';
     form.preferredRegions = p.preferredRegions ?? [];
     form.preferredMajors = p.preferredMajors ?? [];
     form.excludedMajors = p.excludedMajors ?? [];
@@ -104,7 +106,6 @@ onMounted(async () => {
 function toProfilePayload() {
   return {
     ...form,
-    educationLevel: 'VOCATIONAL' as const,
     acceptJointProgram: form.jointProgramPreference === 'UNLIMITED'
       ? undefined
       : form.jointProgramPreference === 'ACCEPT',
