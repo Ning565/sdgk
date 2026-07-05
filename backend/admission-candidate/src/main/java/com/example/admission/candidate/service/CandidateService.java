@@ -73,7 +73,7 @@ public class CandidateService {
      *   <li>校验：subjects 必须为3门，rank > 0</li>
      *   <li>同一用户同一年度只能有一份档案，已存在则更新</li>
      *   <li>计算 subjectComboIndex（调用 SubjectComboUtil）</li>
-     *   <li>如果 rankSource=AUTO 且 score 发生变化，重新从一分一段表匹配位次</li>
+     *   <li>如果 rankSource=AUTO，始终从一分一段表按当前分数匹配位次</li>
      *   <li>如果 rankSource=MANUAL，保留用户手动填入的位次</li>
      * </ol>
      *
@@ -112,9 +112,6 @@ public class CandidateService {
             log.info("Creating new profile: userId={}, year={}", userId, request.getYear());
         }
 
-        // 5. 判断 score 是否发生变化（用于决定是否重新匹配位次）
-        boolean scoreChanged = isUpdate && !request.getScore().equals(existing.getScore());
-
         // 6. 填充字段
         profile.setScore(request.getScore());
         profile.setSubjects(request.getSubjects()); // 内部自动计算 subjectComboIndex
@@ -134,27 +131,21 @@ public class CandidateService {
         profile.setRankSource(rankSource);
 
         if (CandidateProfile.RANK_SOURCE_AUTO.equals(rankSource)) {
-            // AUTO 模式：尝试从一分一段表自动匹配位次
-            if (isUpdate && !scoreChanged) {
-                // 分数未变，保留原位次
-                profile.setRank(existing.getRank());
-            } else {
-                // 新档案或分数变更，重新匹配
-                try {
-                    var resolved = scoreRankService.resolve(request.getYear(), request.getScore());
-                    profile.setRank(resolved.getCumulativeCount());
-                    log.info("Auto rank resolved: year={}, score={}, rank={}",
-                            request.getYear(), request.getScore(), resolved.getCumulativeCount());
-                } catch (BusinessException e) {
-                    if (ErrorCode.SCORE_NOT_FOUND.equals(e.getErrorCode())) {
-                        // 一分一段表中未找到该分数，回退为手动模式
-                        log.warn("Score not found in rank table, falling back to manual rank: year={}, score={}",
-                                request.getYear(), request.getScore());
-                        profile.setRankSource(CandidateProfile.RANK_SOURCE_MANUAL);
-                        profile.setRank(request.getRank());
-                    } else {
-                        throw e;
-                    }
+            // AUTO 模式：每次保存都按当前分数重新匹配，避免修改资料后继续沿用旧位次。
+            try {
+                var resolved = scoreRankService.resolve(request.getYear(), request.getScore());
+                profile.setRank(resolved.getCumulativeCount());
+                log.info("Auto rank resolved: year={}, score={}, rank={}",
+                        request.getYear(), request.getScore(), resolved.getCumulativeCount());
+            } catch (BusinessException e) {
+                if (ErrorCode.SCORE_NOT_FOUND.equals(e.getErrorCode())) {
+                    // 一分一段表中未找到该分数，回退为手动模式
+                    log.warn("Score not found in rank table, falling back to manual rank: year={}, score={}",
+                            request.getYear(), request.getScore());
+                    profile.setRankSource(CandidateProfile.RANK_SOURCE_MANUAL);
+                    profile.setRank(request.getRank());
+                } else {
+                    throw e;
                 }
             }
         } else {

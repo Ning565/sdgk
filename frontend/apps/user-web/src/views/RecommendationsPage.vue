@@ -59,6 +59,20 @@ function splitMajorPrefs(values?: string[]) {
 const schoolGroups = computed(() => {
   if (!volunteerStore.recResult) return [];
   let groups = volunteerStore.recResult.schoolGroups;
+  const rushFloor = Number(recommendationSettings.value.rushProbabilityMin || 0);
+  groups = groups
+    .map(g => {
+      const plans = g.plans.filter(p => p.label !== '冲' || p.probability == null || p.probability >= rushFloor);
+      const probabilities = plans.map(p => p.probability).filter((p): p is number => p != null);
+      return {
+        ...g,
+        plans,
+        eligiblePlanCount: plans.length,
+        minProbability: probabilities.length ? Math.min(...probabilities) : undefined,
+        maxProbability: probabilities.length ? Math.max(...probabilities) : undefined,
+      };
+    })
+    .filter(g => g.plans.length > 0);
   if (keyword.value) {
     const kw = keyword.value.toLowerCase();
     groups = groups
@@ -176,9 +190,7 @@ async function runPrediction() {
 }
 
 async function fetchSmartRecommendations() {
-  if (!candidateStore.candidateProfile) {
-    await candidateStore.fetchProfile(currentYear);
-  }
+  await candidateStore.fetchProfile(currentYear);
   if (candidateStore.candidateProfile) {
     const p = candidateStore.candidateProfile;
     const recommendationCount = normalizedRecommendationCount();

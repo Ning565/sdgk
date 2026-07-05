@@ -66,6 +66,7 @@ public class RecommendationService {
     private static final String DATA_TYPE_HISTORY = "HISTORY";
     /** 单次推荐查询允许返回的最大专业数 */
     private static final int MAX_PAGE_SIZE = 10_000;
+    private static final BigDecimal DEFAULT_RUSH_PROBABILITY_MIN = BigDecimal.valueOf(20);
 
     /**
      * 执行推荐搜索.
@@ -144,6 +145,7 @@ public class RecommendationService {
         // 7. 映射为响应 DTO
         List<PlanRecommendationResponse> planResponses = planVOs.stream()
                 .map(vo -> mapToPlanResponse(vo, candidateRank))
+                .filter(plan -> matchesRushFloor(plan, req))
                 .collect(Collectors.toList());
 
         // 8. 按院校分组
@@ -493,5 +495,25 @@ public class RecommendationService {
             return "稳";
         }
         return "冲";
+    }
+
+    private static boolean matchesRushFloor(PlanRecommendationResponse plan, RecommendationRequest req) {
+        return !"冲".equals(plan.getLabel())
+                || plan.getProbability() == null
+                || plan.getProbability().compareTo(rushProbabilityMin(req)) >= 0;
+    }
+
+    private static BigDecimal rushProbabilityMin(RecommendationRequest req) {
+        BigDecimal configured = req.getRushProbabilityMin();
+        if (configured == null) {
+            return DEFAULT_RUSH_PROBABILITY_MIN;
+        }
+        if (configured.compareTo(BigDecimal.ZERO) < 0) {
+            return BigDecimal.ZERO;
+        }
+        if (configured.compareTo(BigDecimal.valueOf(100)) > 0) {
+            return BigDecimal.valueOf(100);
+        }
+        return configured;
     }
 }

@@ -84,8 +84,7 @@ const majorSubcategoryOptions = [
   '食品类', '餐饮类', '黑色金属材料类',
 ];
 
-onMounted(async () => {
-  await store.fetchProfile(currentYear);
+function syncFormFromProfile() {
   if (store.candidateProfile) {
     const p = store.candidateProfile;
     form.year = p.year;
@@ -101,6 +100,11 @@ onMounted(async () => {
     form.schoolNature = p.schoolNature ?? 'UNLIMITED';
     form.jointProgramPreference = p.acceptJointProgram == null ? 'UNLIMITED' : p.acceptJointProgram ? 'ACCEPT' : 'REJECT';
   }
+}
+
+onMounted(async () => {
+  await store.fetchProfile(currentYear);
+  syncFormFromProfile();
 });
 
 function toProfilePayload() {
@@ -129,6 +133,17 @@ async function handleResolveRank() {
   }
 }
 
+function handleRankChange() {
+  if (form.rank && form.rank > 0) {
+    form.rankSource = 'MANUAL';
+  }
+}
+
+function handleEdit() {
+  syncFormFromProfile();
+  isEditing.value = true;
+}
+
 async function handleSave() {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
@@ -140,6 +155,8 @@ async function handleSave() {
 
   try {
     await store.updateProfile(form.year, toProfilePayload());
+    await store.fetchProfile(form.year);
+    syncFormFromProfile();
     ElMessage.success('保存成功');
     isEditing.value = false;
   } catch (err: unknown) {
@@ -158,6 +175,8 @@ async function handleStartRecommendation() {
     }
     try {
       await store.updateProfile(form.year, toProfilePayload());
+      await store.fetchProfile(form.year);
+      syncFormFromProfile();
       isEditing.value = false;
     } catch (err: unknown) {
       const msg = (err instanceof Error) ? err.message : '保存失败';
@@ -200,7 +219,7 @@ async function handleStartRecommendation() {
         </el-descriptions>
         <div class="candidate-card__actions">
           <el-button type="primary" @click="handleStartRecommendation">智能推荐</el-button>
-          <el-button type="primary" @click="isEditing = true">修改信息</el-button>
+          <el-button type="primary" @click="handleEdit">修改信息</el-button>
         </div>
       </template>
 
@@ -225,7 +244,7 @@ async function handleStartRecommendation() {
           <el-row :gutter="20">
             <el-col :span="12">
               <el-form-item label="全省排名" prop="rank">
-                <el-input-number v-model="form.rank" :min="1" class="w-full" placeholder="可自动根据分数查询" />
+                <el-input-number v-model="form.rank" :min="1" class="w-full" placeholder="可自动根据分数查询" @change="handleRankChange" />
               </el-form-item>
             </el-col>
             <el-col :span="12">
