@@ -94,4 +94,29 @@
         LEFT JOIN prediction_result pr ON ep.id = pr.plan_id
         WHERE 1=1 <include refid="hardFilter"/><include refid="userFilter"/>
     </select>
+    <select id="searchCandidates" resultMap="RecommendationPlanVOMap">
+        SELECT ep.id AS plan_id, ep.plan_series_id, ep.data_version_id, ep.year,
+               ep.school_id, ep.school_code, s.name AS school_name,
+               ep.major_code, ep.major_name, ep.standard_major_code,
+               sm.category_name AS major_category,
+               ep.campus_code, ep.campus_name,
+               ep.enrollment_type_code AS enrollment_type, ep.education_level,
+               ep.plan_count, ep.tuition, ep.duration,
+               ep.subject_requirement_text, ep.plan_status, ep.eligible_subject_bitmap,
+               s.province, s.city, s.school_type, s.school_tag,
+               sm.subcategory_name AS major_subcategory,
+               ep.last_year_min_rank, ep.last_year_min_score, ep.last_year_plan_count, ep.two_year_min_rank, ep.three_year_min_rank,
+               pr.probability, pr.label, COALESCE(pr.predicted_rank_min, ep.predicted_rank) AS predicted_rank,
+               COALESCE(pr.predicted_rank_min, ep.rank_range_min) AS rank_range_min,
+               COALESCE(pr.predicted_rank_max, ep.rank_range_max) AS rank_range_max,
+               pr.model_version
+        FROM enrollment_plan ep
+        INNER JOIN school s ON ep.school_id = s.id
+        LEFT JOIN standard_major sm ON ep.standard_major_code = sm.code
+        LEFT JOIN prediction_result pr ON ep.id = pr.plan_id
+        WHERE 1=1 <include refid="hardFilter"/><include refid="userFilter"/>
+        ORDER BY COALESCE(pr.predicted_rank_min, ep.predicted_rank) IS NULL ASC,
+                 COALESCE(pr.predicted_rank_min, ep.predicted_rank) ASC, ep.id ASC
+        LIMIT #{limit}
+    </select>
 </mapper>

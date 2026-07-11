@@ -5,6 +5,7 @@ import com.example.admission.recommendation.dto.PlanRecommendationResponse;
 import com.example.admission.recommendation.dto.RecommendationRequest;
 import com.example.admission.recommendation.dto.RecommendationResponse;
 import com.example.admission.recommendation.dto.SchoolGroupResponse;
+import com.example.admission.recommendation.util.PortfolioMixer;
 import com.example.admission.recommendation.util.SchoolGrouper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +21,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -46,7 +46,6 @@ public class SpecializedModelRecommendationService {
     private static final int MIN_PAGE_SIZE = 1;
     private static final int MAX_PAGE_SIZE = 10_000;
     private static final int DEFAULT_RECOMMENDATION_COUNT = 96;
-    private static final BigDecimal DEFAULT_RUSH_PROBABILITY_MIN = BigDecimal.valueOf(20);
 
     @Value("${app.specialized-model.path:data/organized/modeling_outputs/specialized_rank_model_2026.csv}")
     private String modelPath;
@@ -58,20 +57,19 @@ public class SpecializedModelRecommendationService {
         return Files.isRegularFile(resolveModelPath());
     }
 
-    public RecommendationResponse search(RecommendationRequest req) {
-        List<ModelPlan> plans = loadPlans();
-        Integer candidateRank = req.getRank();
-        Set<String> subjects = normalizeSubjects(req.getSubjects());
+    /** 专科模型版本号，供"不限"合并路径填充响应。 */
+    public String modelVersion() {
+        return MODEL_VERSION;
+    }
 
-        List<PlanRecommendationResponse> filtered = plans.stream()
-                .filter(plan -> matchesSubjects(plan, subjects))
-                .filter(plan -> matchesUserFilters(plan, req))
-                .map(plan -> toResponse(plan, candidateRank))
-                .filter(plan -> matchesProbabilityAndLabel(plan, req))
-                .filter(plan -> matchesRushFloor(plan, req))
-                .sorted(comparator(req))
+    public RecommendationResponse search(RecommendationRequest req) {
+        List<PlanRecommendationResponse> eligibleAll = collectAll(req);
+        List<PlanRecommendationResponse> filtered = eligibleAll.stream()
+                .filter(plan -> PortfolioMixer.matchesProbabilityAndLabel(plan, req))
+                .filter(plan -> PortfolioMixer.matchesRushFloor(plan, req))
                 .collect(Collectors.toList());
 
+        long eligiblePlans = eligibleAll.size();
         long totalPlans = filtered.size();
         int totalSchools = (int) filtered.stream()
                 .map(PlanRecommendationResponse::getSchoolId)
@@ -83,8 +81,10 @@ public class SpecializedModelRecommendationService {
         int pageSize = req.getRecommendationCount() != null ? req.getRecommendationCount()
                 : (req.getPageSize() == null ? DEFAULT_RECOMMENDATION_COUNT : req.getPageSize());
         pageSize = Math.max(MIN_PAGE_SIZE, Math.min(MAX_PAGE_SIZE, pageSize));
-        if (shouldUsePortfolioMix(req)) {
-            filtered = mixPortfolio(filtered, pageSize, req);
+        if (PortfolioMixer.shouldMix(req)) {
+            filtered = PortfolioMixer.mix(filtered, pageSize, req);
+        } else {
+            filtered.sort(PortfolioMixer.comparator(req));
         }
         int from = Math.min((pageNo - 1) * pageSize, filtered.size());
         int to = Math.min(from + pageSize, filtered.size());
@@ -94,6 +94,9 @@ public class SpecializedModelRecommendationService {
         return RecommendationResponse.builder()
                 .schoolGroups(groups)
                 .totalPlans(totalPlans)
+                .eligiblePlanCount(eligiblePlans)
+                .candidatePlanCount(totalPlans)
+                .recommendedPlanCount(page.size())
                 .totalSchools(totalSchools)
                 .planDataVersion("organized-2026-specialized")
                 .historyDataVersion("history-2022-2025")
@@ -101,6 +104,30 @@ public class SpecializedModelRecommendationService {
                 .updatedAt(Instant.now())
                 .traceId(TraceContext.getTraceId())
                 .build();
+    }
+
+    /**
+     * 供"不限"学历合并路径复用：返回已算概率、并经概率/标签/冲刺下限过滤的专科候选列表.
+     *
+     * <p>不做分页与冲稳保混合，由调用方合并本专科候选后统一处理。</p>
+     */
+    public List<PlanRecommendationResponse> collectEligible(RecommendationRequest req) {
+        return collectAll(req).stream()
+                .filter(plan -> PortfolioMixer.matchesProbabilityAndLabel(plan, req))
+                .filter(plan -> PortfolioMixer.matchesRushFloor(plan, req))
+                .collect(Collectors.toList());
+    }
+
+    /** 应用选科硬过滤与用户筛选后，逐条计算概率得到的完整候选列表（未做概率/标签过滤）。 */
+    private List<PlanRecommendationResponse> collectAll(RecommendationRequest req) {
+        List<ModelPlan> plans = loadPlans();
+        Integer candidateRank = req.getRank();
+        Set<String> subjects = normalizeSubjects(req.getSubjects());
+        return plans.stream()
+                .filter(plan -> matchesSubjects(plan, subjects))
+                .filter(plan -> matchesUserFilters(plan, req))
+                .map(plan -> toResponse(plan, candidateRank))
+                .collect(Collectors.toList());
     }
 
     private List<ModelPlan> loadPlans() {
@@ -270,29 +297,6 @@ public class SpecializedModelRecommendationService {
         return true;
     }
 
-    private static boolean matchesProbabilityAndLabel(PlanRecommendationResponse plan,
-                                                       RecommendationRequest req) {
-        if (req.getProbabilityMin() != null && plan.getProbability() != null
-                && plan.getProbability().compareTo(req.getProbabilityMin()) < 0) {
-            return false;
-        }
-        if (req.getProbabilityMax() != null && plan.getProbability() != null
-                && plan.getProbability().compareTo(req.getProbabilityMax()) > 0) {
-            return false;
-        }
-        if ("冲".equals(req.getLabel()) && plan.getProbability() != null
-                && plan.getProbability().compareTo(rushProbabilityMin(req)) < 0) {
-            return false;
-        }
-        return req.getLabel() == null || req.getLabel().isBlank() || req.getLabel().equals(plan.getLabel());
-    }
-
-    private static boolean matchesRushFloor(PlanRecommendationResponse plan, RecommendationRequest req) {
-        return !"冲".equals(plan.getLabel())
-                || plan.getProbability() == null
-                || plan.getProbability().compareTo(rushProbabilityMin(req)) >= 0;
-    }
-
     private static PlanRecommendationResponse toResponse(ModelPlan plan, Integer candidateRank) {
         BigDecimal probability = computeProbability(plan, candidateRank);
         String label = label(probability);
@@ -361,141 +365,6 @@ public class SpecializedModelRecommendationService {
             return BigDecimal.valueOf(0.65);
         }
         return BigDecimal.valueOf(0.45);
-    }
-
-    private static Comparator<PlanRecommendationResponse> comparator(RecommendationRequest req) {
-        String sortBy = req.getSortBy() == null ? "probability" : req.getSortBy();
-        boolean asc = "asc".equalsIgnoreCase(req.getSortDir());
-        Comparator<PlanRecommendationResponse> comparator;
-        switch (sortBy) {
-            case "rankDiff" -> comparator = Comparator.comparing(
-                    PlanRecommendationResponse::getRankDiff,
-                    Comparator.nullsLast(Integer::compareTo));
-            case "lastYearMinRank" -> comparator = Comparator.comparing(
-                    PlanRecommendationResponse::getLastYearMinRank,
-                    Comparator.nullsLast(Integer::compareTo));
-            case "planCount" -> comparator = Comparator.comparing(
-                    PlanRecommendationResponse::getPlanCount,
-                    Comparator.nullsLast(Integer::compareTo));
-            case "tuition" -> comparator = Comparator.comparing(
-                    PlanRecommendationResponse::getTuition,
-                    Comparator.nullsLast(BigDecimal::compareTo));
-            default -> comparator = Comparator.comparing(
-                    PlanRecommendationResponse::getProbability,
-                    Comparator.nullsLast(BigDecimal::compareTo));
-        }
-        if (!asc) {
-            comparator = comparator.reversed();
-        }
-        return comparator.thenComparing(PlanRecommendationResponse::getSchoolName,
-                Comparator.nullsLast(String::compareTo));
-    }
-
-    private static boolean shouldUsePortfolioMix(RecommendationRequest req) {
-        String sortBy = req.getSortBy() == null ? "probability" : req.getSortBy();
-        return "probability".equals(sortBy)
-                && (req.getLabel() == null || req.getLabel().isBlank())
-                && req.getProbabilityMin() == null
-                && req.getProbabilityMax() == null;
-    }
-
-    private static List<PlanRecommendationResponse> mixPortfolio(List<PlanRecommendationResponse> sorted,
-                                                                  int pageSize,
-                                                                  RecommendationRequest req) {
-        if (sorted.size() <= pageSize) {
-            return sorted;
-        }
-        BigDecimal rushMin = rushProbabilityMin(req);
-        List<PlanRecommendationResponse> rush = sorted.stream()
-                .filter(plan -> "冲".equals(plan.getLabel()))
-                .filter(plan -> plan.getProbability() == null || plan.getProbability().compareTo(rushMin) >= 0)
-                .sorted(Comparator.comparing(PlanRecommendationResponse::getProbability,
-                        Comparator.nullsLast(BigDecimal::compareTo)).reversed())
-                .toList();
-        List<PlanRecommendationResponse> stable = sorted.stream()
-                .filter(plan -> "稳".equals(plan.getLabel()))
-                .sorted(Comparator.comparing(PlanRecommendationResponse::getProbability,
-                        Comparator.nullsLast(BigDecimal::compareTo)).reversed())
-                .toList();
-        List<PlanRecommendationResponse> safe = sorted.stream()
-                .filter(plan -> "保".equals(plan.getLabel()))
-                .sorted(Comparator.comparing(PlanRecommendationResponse::getProbability,
-                        Comparator.nullsLast(BigDecimal::compareTo)).reversed())
-                .toList();
-
-        int target = Math.min(pageSize, sorted.size());
-        PortfolioRatios ratios = portfolioRatios(req);
-        int rushQuota = Math.min(rush.size(), Math.max(0, (int) Math.round(target * ratios.rush())));
-        int stableQuota = Math.min(stable.size(), Math.max(0, (int) Math.round(target * ratios.stable())));
-        int safeQuota = Math.min(safe.size(), Math.max(0, target - rushQuota - stableQuota));
-
-        List<PlanRecommendationResponse> mixed = new ArrayList<>(sorted.size());
-        addFirstN(mixed, rush, rushQuota);
-        addFirstN(mixed, stable, stableQuota);
-        addFirstN(mixed, safe, safeQuota);
-
-        Set<Long> picked = mixed.stream()
-                .map(PlanRecommendationResponse::getPlanId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        for (PlanRecommendationResponse plan : sorted) {
-            Long planId = plan.getPlanId();
-            if (planId == null || !picked.contains(planId)) {
-                mixed.add(plan);
-                if (planId != null) {
-                    picked.add(planId);
-                }
-            }
-        }
-        return mixed;
-    }
-
-    private static BigDecimal rushProbabilityMin(RecommendationRequest req) {
-        BigDecimal configured = req.getRushProbabilityMin();
-        if (configured == null) {
-            return DEFAULT_RUSH_PROBABILITY_MIN;
-        }
-        if (configured.compareTo(BigDecimal.ZERO) < 0) {
-            return BigDecimal.ZERO;
-        }
-        if (configured.compareTo(BigDecimal.valueOf(100)) > 0) {
-            return BigDecimal.valueOf(100);
-        }
-        return configured;
-    }
-
-    private static PortfolioRatios portfolioRatios(RecommendationRequest req) {
-        double rush = ratioValue(req.getRushRatio(), 0.25);
-        double stable = ratioValue(req.getStableRatio(), 1.0 / 3.0);
-        double safe = ratioValue(req.getSafeRatio(), 0.0);
-        if (req.getSafeRatio() == null) {
-            safe = Math.max(0.0, 1.0 - rush - stable);
-        }
-        double sum = rush + stable + safe;
-        if (sum <= 0.0) {
-            return new PortfolioRatios(0.25, 1.0 / 3.0, 5.0 / 12.0);
-        }
-        return new PortfolioRatios(rush / sum, stable / sum, safe / sum);
-    }
-
-    private static double ratioValue(BigDecimal value, double fallback) {
-        if (value == null) {
-            return fallback;
-        }
-        double ratio = value.doubleValue();
-        if (Double.isNaN(ratio) || Double.isInfinite(ratio) || ratio < 0.0) {
-            return 0.0;
-        }
-        return Math.min(1.0, ratio);
-    }
-
-    private static void addFirstN(List<PlanRecommendationResponse> target,
-                                  List<PlanRecommendationResponse> source,
-                                  int count) {
-        int limit = Math.min(count, source.size());
-        for (int i = 0; i < limit; i++) {
-            target.add(source.get(i));
-        }
     }
 
     private static Set<String> normalizeSubjects(List<String> subjects) {
@@ -638,8 +507,5 @@ public class SpecializedModelRecommendationService {
             }
             return tokens;
         }
-    }
-
-    private record PortfolioRatios(double rush, double stable, double safe) {
     }
 }

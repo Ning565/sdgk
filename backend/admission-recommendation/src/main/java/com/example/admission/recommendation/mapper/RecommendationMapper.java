@@ -62,4 +62,22 @@ public interface RecommendationMapper {
                       @Param("historyVersionId") Long historyVersionId,
                       @Param("userId") Long userId,
                       @Param("subjectComboIndex") Integer subjectComboIndex);
+
+    /**
+     * 拉取符合硬过滤与用户筛选的全量候选计划（不做概率排序与截断）.
+     *
+     * <p>用于本科数据库推荐路径：先取全量候选池，概率计算、位次兜底与
+     * 冲稳保混合全部放到 Java 侧完成，避免 SQL 层用概率排序 + LIMIT 造成
+     * 无 predicted_rank 计划（NULL 排在最前）霸占结果。</p>
+     *
+     * @param req              推荐搜索请求
+     * @param dataVersionId    当前生效的招生计划数据版本ID
+     * @param subjectComboIndex 考生选科组合索引
+     * @param limit            候选池上限
+     * @return 候选计划 VO 列表
+     */
+    List<RecommendationPlanVO> searchCandidates(@Param("req") RecommendationRequest req,
+                                                @Param("dataVersionId") Long dataVersionId,
+                                                @Param("subjectComboIndex") Integer subjectComboIndex,
+                                                @Param("limit") int limit);
 }

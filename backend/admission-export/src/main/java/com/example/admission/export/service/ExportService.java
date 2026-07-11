@@ -6,6 +6,8 @@ import com.example.admission.auth.service.AuthService;
 import com.example.admission.candidate.entity.CandidateProfile;
 import com.example.admission.candidate.service.CandidateService;
 import com.example.admission.catalog.entity.EnrollmentPlan;
+import com.example.admission.catalog.entity.StandardMajor;
+import com.example.admission.catalog.mapper.StandardMajorMapper;
 import com.example.admission.catalog.service.EnrollmentPlanService;
 import com.example.admission.common.BusinessException;
 import com.example.admission.common.ErrorCode;
@@ -33,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -58,6 +61,7 @@ public class ExportService {
     private final AuthService authService;
     private final CandidateService candidateService;
     private final EnrollmentPlanService enrollmentPlanService;
+    private final StandardMajorMapper standardMajorMapper;
 
     @Value("${app.export.base-dir:data/export}")
     private String exportBaseDir;
@@ -102,9 +106,10 @@ public class ExportService {
 
         // 4. 获取考生档案 + 计划详情 + 检查结果
         CandidateProfile profile = candidateService.getProfile(form.getYear());
-        List<Long> planIds = items.stream().map(VolunteerItem::getPlanId).distinct().toList();
+        List<Long> planIds = items.stream().map(VolunteerItem::getPlanId).filter(Objects::nonNull).distinct().toList();
         Map<Long, EnrollmentPlan> planMap = enrollmentPlanService.listPlansByIds(planIds).stream()
                 .collect(Collectors.toMap(EnrollmentPlan::getId, p -> p, (a, b) -> a));
+        Map<String, StandardMajor> standardMajorMap = loadStandardMajorMap(planMap.values());
 
         // 5. 生成 Excel
         String fileName = generateFileName(form.getName());
@@ -113,7 +118,7 @@ public class ExportService {
         try {
             Files.createDirectories(dirPath);
             filePath = dirPath.resolve(fileName).toString();
-            generateExcel(filePath, form, items, profile, planMap);
+            generateExcel(filePath, form, items, profile, planMap, standardMajorMap);
         } catch (IOException e) {
             log.error("Failed to generate Excel: formId={}", formId, e);
             throw new BusinessException(ErrorCode.EXPORT_FAILED, "生成Excel文件失败: " + e.getMessage());
@@ -186,13 +191,14 @@ public class ExportService {
     // ==================== Excel 生成 ====================
 
     private void generateExcel(String filePath, VolunteerForm form, List<VolunteerItem> items,
-                                CandidateProfile profile, Map<Long, EnrollmentPlan> planMap) throws IOException {
+                                CandidateProfile profile, Map<Long, EnrollmentPlan> planMap,
+                                Map<String, StandardMajor> standardMajorMap) throws IOException {
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             // Sheet 1: 考生信息
             createCandidateSheet(workbook, form, profile);
 
             // Sheet 2: 志愿表
-            createVolunteerSheet(workbook, items, planMap, profile);
+            createVolunteerSheet(workbook, items, planMap, standardMajorMap);
 
             // Sheet 3: 检查结果
             createCheckSheet(workbook, form.getId(), planMap);
@@ -241,13 +247,14 @@ public class ExportService {
     }
 
     private void createVolunteerSheet(XSSFWorkbook workbook, List<VolunteerItem> items,
-                                       Map<Long, EnrollmentPlan> planMap, CandidateProfile profile) {
+                                       Map<Long, EnrollmentPlan> planMap,
+                                       Map<String, StandardMajor> standardMajorMap) {
         Sheet sheet = workbook.createSheet("志愿表");
         CellStyle headerStyle = createHeaderStyle(workbook);
         CellStyle dataStyle = createDataStyle(workbook);
 
-        String[] headers = {"顺序", "标签", "概率", "学校", "专业", "招生类型", "校区",
-                "选科要求", "招生人数", "上一年最低分", "上一年最低位次", "学费", "备注"};
+        String[] headers = {"序号", "层级（冲稳保）", "院校代号", "院校", "专业代码",
+                "专业", "选科要求", "计划人数", "学费", "专业类"};
 
         int rowIdx = 0;
         Row headerRow = sheet.createRow(rowIdx++);
@@ -260,28 +267,26 @@ public class ExportService {
             EnrollmentPlan plan = planMap.get(item.getPlanId());
             int col = 0;
 
-            createCell(row, col++, String.valueOf(item.getSortOrder()), dataStyle);
-            createCell(row, col++, "", dataStyle);   // 标签
-            createCell(row, col++, "", dataStyle);   // 概率
-            createCell(row, col++, plan != null ? plan.getSchoolName() : "", dataStyle);
-            createCell(row, col++, plan != null ? plan.getMajorName() : "", dataStyle);
-            createCell(row, col++, plan != null ? plan.getEnrollmentType() : "", dataStyle);
-            createCell(row, col++, plan != null ? plan.getCampusName() : "", dataStyle);
-            createCell(row, col++, plan != null ? plan.getSubjectRequirementText() : "", dataStyle);
-            createCell(row, col++, plan != null && plan.getPlanCount() != null ? String.valueOf(plan.getPlanCount()) : "", dataStyle);
-            createCell(row, col++, "", dataStyle);   // 上一年最低分
-            createCell(row, col++, "", dataStyle);   // 上一年最低位次
-            createCell(row, col++, plan != null && plan.getTuition() != null ? plan.getTuition().toString() : "", dataStyle);
-            createCell(row, col, item.getNote() != null ? item.getNote() : "", dataStyle);
+            createCell(row, col++, String.valueOf(rowIdx - 1), dataStyle);
+            createCell(row, col++, text(item.getLabel()), dataStyle);
+            createCell(row, col++, text(item.getSchoolCode(), plan != null ? plan.getSchoolCode() : null), dataStyle);
+            createCell(row, col++, text(item.getSchoolName(), plan != null ? plan.getSchoolName() : null), dataStyle);
+            createCell(row, col++, text(item.getMajorCode(), plan != null ? plan.getMajorCode() : null), dataStyle);
+            createCell(row, col++, text(item.getMajorName(), plan != null ? plan.getMajorName() : null), dataStyle);
+            createCell(row, col++, text(item.getSubjectRequirementText(),
+                    plan != null ? plan.getSubjectRequirementText() : null, "不限"), dataStyle);
+            createCell(row, col++, formatPlanCount(item.getPlanCount(),
+                    plan != null ? plan.getPlanCount() : null), dataStyle);
+            createCell(row, col++, formatTuition(item.getTuition(),
+                    plan != null ? plan.getTuition() : null), dataStyle);
+            createCell(row, col, getMajorSubcategory(plan, standardMajorMap), dataStyle);
         }
 
         // 设置列宽
-        for (int i = 0; i < headers.length; i++) {
-            sheet.setColumnWidth(i, 15 * 256);
+        int[] widths = {10, 16, 16, 26, 16, 30, 20, 14, 14, 22};
+        for (int i = 0; i < widths.length; i++) {
+            sheet.setColumnWidth(i, widths[i] * 256);
         }
-        sheet.setColumnWidth(3, 25 * 256);  // 学校
-        sheet.setColumnWidth(4, 25 * 256);  // 专业
-        sheet.setColumnWidth(12, 30 * 256); // 备注
     }
 
     private void createCheckSheet(XSSFWorkbook workbook, Long formId, Map<Long, EnrollmentPlan> planMap) {
@@ -334,6 +339,51 @@ public class ExportService {
         }
         sheet.setColumnWidth(5, 40 * 256);
         sheet.setColumnWidth(6, 40 * 256);
+    }
+
+    private Map<String, StandardMajor> loadStandardMajorMap(Collection<EnrollmentPlan> plans) {
+        List<String> codes = plans.stream()
+                .map(EnrollmentPlan::getStandardMajorCode)
+                .filter(code -> code != null && !code.isBlank())
+                .distinct()
+                .toList();
+        if (codes.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return standardMajorMapper.selectList(
+                        new LambdaQueryWrapper<StandardMajor>().in(StandardMajor::getMajorCode, codes)
+                ).stream()
+                .collect(Collectors.toMap(StandardMajor::getMajorCode, major -> major, (a, b) -> a));
+    }
+
+    private String getMajorSubcategory(EnrollmentPlan plan, Map<String, StandardMajor> standardMajorMap) {
+        if (plan == null) {
+            return "";
+        }
+        StandardMajor standardMajor = standardMajorMap.get(plan.getStandardMajorCode());
+        return text(
+                standardMajor != null ? standardMajor.getSubcategoryName() : null,
+                plan.getMajorCategory()
+        );
+    }
+
+    private String formatPlanCount(Integer itemPlanCount, Integer planPlanCount) {
+        Integer count = itemPlanCount != null ? itemPlanCount : planPlanCount;
+        return count != null ? count + "人" : "";
+    }
+
+    private String formatTuition(BigDecimal itemTuition, BigDecimal planTuition) {
+        BigDecimal tuition = itemTuition != null ? itemTuition : planTuition;
+        return tuition != null ? tuition.stripTrailingZeros().toPlainString() : "";
+    }
+
+    private String text(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
     }
 
     // ==================== Cell 工具方法 ====================

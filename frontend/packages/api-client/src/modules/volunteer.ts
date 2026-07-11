@@ -2,6 +2,7 @@ import type {
   VolunteerFormDTO,
   VolunteerFormDetailDTO,
   VolunteerChoiceDTO,
+  VolunteerExportResponseDTO,
   RecommendationRequest,
   RecommendationResponseDTO,
 } from '@gaokao/shared-types';
@@ -90,9 +91,7 @@ export const volunteerApi = {
   },
 
   // 导出
-  exportForm(formId: string) {
-    return httpClient.post<Blob>(`/volunteer-forms/${formId}/export`, undefined, {
-      responseType: 'blob',
-    });
+  exportForm(formId: string, data?: { confirmWithErrors?: boolean; clientOperationId?: string }) {
+    return httpClient.post<VolunteerExportResponseDTO>(`/volunteer-forms/${formId}/export`, data ?? {});
   },
 };

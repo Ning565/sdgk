@@ -12,6 +12,7 @@ import com.example.admission.recommendation.dto.RecommendationResponse;
 import com.example.admission.recommendation.dto.SchoolGroupResponse;
 import com.example.admission.recommendation.mapper.RecommendationMapper;
 import com.example.admission.recommendation.mapper.RecommendationPlanVO;
+import com.example.admission.recommendation.util.PortfolioMixer;
 import com.example.admission.recommendation.util.SchoolGrouper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,16 +27,18 @@ import java.util.stream.Collectors;
 /**
  * 推荐搜索服务.
  *
- * <p>实现三层过滤引擎：
+ * <p>统一的推荐流程为：硬过滤 → 位次感知概率 → 位次兜底 → 冲稳保混合 → TopK：
  * <ol>
- *   <li>硬过滤 — 版本、年度、状态、选科、教育层次等不可跳过的条件</li>
- *   <li>用户筛选 — 关键词、地区、院校性质、专业门类、学费等用户可控条件</li>
- *   <li>排序与院校分组 — 按指定字段排序，按院校聚合</li>
+ *   <li>硬过滤 — 版本、年度、状态、选科、教育层次等不可跳过的条件（SQL 层）</li>
+ *   <li>用户筛选 — 关键词、地区、院校性质、专业门类、学费等用户可控条件（SQL 层）</li>
+ *   <li>位次感知概率 — 逐条按考生位次与参考位次计算录取概率（Java 层）</li>
+ *   <li>位次兜底 — 无自身位次参考的新增/特殊招生计划，回退到同校最宽松位次估算并做硬剔除</li>
+ *   <li>冲稳保混合 + 分组分页 — 由 {@link PortfolioMixer} 完成组合，再按院校聚合</li>
  * </ol>
  *
- * <p>通过注入 catalog 模块的 {@link EnrollmentPlanService} 和
- * dataimport 模块的 {@link DataVersionService} 获取基础数据，
- * 推荐专属的复杂联查由本模块的 {@link RecommendationMapper} 完成。</p>
+ * <p>本科走数据库路径（{@link RecommendationMapper}），专科 2026 走
+ * {@link SpecializedModelRecommendationService} 的文件模型路径，两者共用同一套
+ * 概率过滤与冲稳保混合逻辑（{@link PortfolioMixer}）。</p>
  */
 @Slf4j
 @Service
@@ -66,15 +69,22 @@ public class RecommendationService {
     private static final String DATA_TYPE_HISTORY = "HISTORY";
     /** 单次推荐查询允许返回的最大专业数 */
     private static final int MAX_PAGE_SIZE = 10_000;
-    private static final BigDecimal DEFAULT_RUSH_PROBABILITY_MIN = BigDecimal.valueOf(20);
+    /** 候选池上限：全量拉取后在 Java 侧算概率与混合 */
+    private static final int MAX_CANDIDATE_POOL = 10_000;
+    /** 无自身位次参考的兜底专业概率上限（不进"保"） */
+    private static final double FALLBACK_PROBABILITY_CAP = 50.0;
+    /** 院校位次兜底裕度：兜底专业考生位次不得差于同校最宽松参考位次 10% 以上 */
+    private static final double SCHOOL_FLOOR_MARGIN = 1.10;
+    /** sigmoid 概率的最小尺度参数 */
+    private static final double MIN_PROBABILITY_SCALE = 8000.0;
 
     /**
      * 执行推荐搜索.
      *
-     * @param req 请求对象    推荐搜索请求
+     * @param req    推荐搜索请求
      * @param userId 当前用户ID（可选，用于获取个性化预测结果）
      * @return 推荐搜索响应
-     * @throws BusinessException 业务异常 如果参数无效或查询失败
+     * @throws BusinessException 如果参数无效或查询失败
      */
     public RecommendationResponse search(RecommendationRequest req, Long userId) {
         // 0. 参数校验与标准化
@@ -95,113 +105,56 @@ public class RecommendationService {
     }
 
     private RecommendationResponse searchDatabase(RecommendationRequest req, Long userId) {
-        // 1. 获取当前生效的数据版本
-        ActiveDataVersion planVersion = dataVersionService.getActiveVersion(DATA_TYPE_PLAN, req.getYear());
-        if (planVersion == null) {
-            throw new BusinessException(ErrorCode.DATA_NOT_FOUND,
-                    "招生年度 " + req.getYear() + " 的招生计划数据尚未发布");
-        }
-        ActiveDataVersion historyVersion = dataVersionService.getActiveVersion(
-                DATA_TYPE_HISTORY, req.getYear() - 1);
+        DatabaseCandidates db = collectDatabaseCandidates(req, userId);
+        List<PlanRecommendationResponse> candidates = db.candidates();
 
-        // 2. 获取考生位次（只要有用户ID就尝试获取）
-        final Integer candidateRank = req.getRank() != null ? req.getRank()
-                : (userId != null ? getCandidateRank(userId) : null);
+        long candidatePlanCount = candidates.size();
+        int totalSchools = distinctSchools(candidates);
 
-        // 3. 获取选科组合索引
-        Integer subjectComboIndex = req.getSubjectComboIndex();
+        List<PlanRecommendationResponse> page = mixAndPage(candidates, req);
+        List<SchoolGroupResponse> schoolGroups = SchoolGrouper.group(page, req.getSortBy(), req.getSortDir());
 
-        // 4. 计算分页偏移
-        int offset = (req.getPageNo() - 1) * req.getPageSize();
-
-        // 5. 执行查询（硬过滤 + 用户筛选 + 排序）
-        List<RecommendationPlanVO> planVOs = recommendationMapper.searchPlans(
-                req,
-                planVersion.getDataVersionId(),
-                historyVersion != null ? historyVersion.getDataVersionId() : null,
-                userId,
-                subjectComboIndex,
-                candidateRank,
-                offset,
-                req.getPageSize()
-        );
-
-        // 6. 统计总数
-        long totalPlans = recommendationMapper.countPlans(
-                req,
-                planVersion.getDataVersionId(),
-                historyVersion != null ? historyVersion.getDataVersionId() : null,
-                userId,
-                subjectComboIndex
-        );
-        long totalSchools = recommendationMapper.countSchools(
-                req,
-                planVersion.getDataVersionId(),
-                historyVersion != null ? historyVersion.getDataVersionId() : null,
-                userId,
-                subjectComboIndex
-        );
-
-        // 7. 映射为响应 DTO
-        List<PlanRecommendationResponse> planResponses = planVOs.stream()
-                .map(vo -> mapToPlanResponse(vo, candidateRank))
-                .filter(plan -> matchesRushFloor(plan, req))
-                .collect(Collectors.toList());
-
-        // 8. 按院校分组
-        List<SchoolGroupResponse> schoolGroups = SchoolGrouper.group(
-                planResponses, req.getSortBy(), req.getSortDir());
-
-        // 10. 获取模型版本（从第一条有预测数据的记录中提取）
-        String modelVersion = planVOs.stream()
-                .map(RecommendationPlanVO::getModelVersion)
-                .filter(Objects::nonNull)
-                .findFirst()
-                .orElse(null);
-
-        // 11. 构建响应
         return RecommendationResponse.builder()
                 .schoolGroups(schoolGroups)
-                .totalPlans(totalPlans)
-                .totalSchools((int) totalSchools)
-                .planDataVersion("v" + planVersion.getDataVersionId())
-                .historyDataVersion(historyVersion != null
-                        ? "v" + historyVersion.getDataVersionId() : null)
-                .modelVersion(modelVersion)
+                .totalPlans(candidatePlanCount)
+                .eligiblePlanCount(db.eligibleCount())
+                .candidatePlanCount(candidatePlanCount)
+                .recommendedPlanCount(page.size())
+                .totalSchools(totalSchools)
+                .planDataVersion(db.planDataVersion())
+                .historyDataVersion(db.historyDataVersion())
+                .modelVersion(null)
                 .updatedAt(Instant.now())
                 .traceId(TraceContext.getTraceId())
                 .build();
     }
 
     private RecommendationResponse searchUnlimited(RecommendationRequest req, Long userId) {
-        List<PlanRecommendationResponse> allPlans = new ArrayList<>();
-        long totalPlans = 0;
+        List<PlanRecommendationResponse> candidates = new ArrayList<>();
         String planDataVersion = null;
         String historyDataVersion = null;
         String modelVersion = null;
 
+        // 专科候选：2026 使用专科文件模型
         if (req.getYear() != null
                 && req.getYear() == 2026
                 && specializedModelRecommendationService.isAvailable()) {
             RecommendationRequest specializedReq = copyRequest(req);
             specializedReq.setEducationLevel(EDU_SPECIALIZED);
-            RecommendationResponse specialized = specializedModelRecommendationService.search(specializedReq);
-            allPlans.addAll(flattenPlans(specialized));
-            totalPlans += specialized.getTotalPlans();
-            planDataVersion = specialized.getPlanDataVersion();
-            historyDataVersion = specialized.getHistoryDataVersion();
-            modelVersion = specialized.getModelVersion();
+            candidates.addAll(specializedModelRecommendationService.collectEligible(specializedReq));
+            planDataVersion = "organized-2026-specialized";
+            historyDataVersion = "history-2022-2025";
+            modelVersion = specializedModelRecommendationService.modelVersion();
         }
 
+        // 本科候选：数据库路径
         try {
             RecommendationRequest undergraduateReq = copyRequest(req);
             undergraduateReq.setEducationLevel(EDU_UNDERGRADUATE);
-            RecommendationResponse undergraduate = searchDatabase(undergraduateReq, userId);
-            allPlans.addAll(flattenPlans(undergraduate));
-            totalPlans += undergraduate.getTotalPlans();
-            planDataVersion = joinVersion(planDataVersion, undergraduate.getPlanDataVersion());
-            historyDataVersion = joinVersion(historyDataVersion, undergraduate.getHistoryDataVersion());
-            modelVersion = joinVersion(modelVersion, undergraduate.getModelVersion());
+            DatabaseCandidates db = collectDatabaseCandidates(undergraduateReq, userId);
+            candidates.addAll(db.candidates());
+            planDataVersion = joinVersion(planDataVersion, db.planDataVersion());
+            historyDataVersion = joinVersion(historyDataVersion, db.historyDataVersion());
         } catch (BusinessException e) {
             if (!ErrorCode.DATA_NOT_FOUND.equals(e.getErrorCode())) {
                 throw e;
@@ -209,31 +162,18 @@ public class RecommendationService {
             log.warn("Undergraduate recommendation skipped for unlimited search: {}", e.getMessage());
         }
 
-        Comparator<PlanRecommendationResponse> comparator = Comparator
-                .comparing(PlanRecommendationResponse::getProbability,
-                        Comparator.nullsLast(BigDecimal::compareTo))
-                .reversed()
-                .thenComparing(PlanRecommendationResponse::getSchoolName,
-                        Comparator.nullsLast(String::compareTo));
-        allPlans.sort(comparator);
+        long candidatePlanCount = candidates.size();
+        int totalSchools = distinctSchools(candidates);
 
-        int pageNo = req.getPageNo() == null || req.getPageNo() < 1 ? 1 : req.getPageNo();
-        int pageSize = req.getRecommendationCount() != null ? req.getRecommendationCount() : req.getPageSize();
-        pageSize = Math.max(1, Math.min(MAX_PAGE_SIZE, pageSize));
-        int from = Math.min((pageNo - 1) * pageSize, allPlans.size());
-        int to = Math.min(from + pageSize, allPlans.size());
-        List<PlanRecommendationResponse> page = new ArrayList<>(allPlans.subList(from, to));
-
+        List<PlanRecommendationResponse> page = mixAndPage(candidates, req);
         List<SchoolGroupResponse> schoolGroups = SchoolGrouper.group(page, req.getSortBy(), req.getSortDir());
-        int totalSchools = (int) allPlans.stream()
-                .map(PlanRecommendationResponse::getSchoolId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .count();
 
         return RecommendationResponse.builder()
                 .schoolGroups(schoolGroups)
-                .totalPlans(totalPlans)
+                .totalPlans(candidatePlanCount)
+                .eligiblePlanCount(candidatePlanCount)
+                .candidatePlanCount(candidatePlanCount)
+                .recommendedPlanCount(page.size())
                 .totalSchools(totalSchools)
                 .planDataVersion(planDataVersion)
                 .historyDataVersion(historyDataVersion)
@@ -243,14 +183,209 @@ public class RecommendationService {
                 .build();
     }
 
-    private static List<PlanRecommendationResponse> flattenPlans(RecommendationResponse response) {
-        if (response == null || response.getSchoolGroups() == null) {
-            return List.of();
+    /**
+     * 拉取本科数据库候选池并逐条算概率、做位次兜底与概率过滤（未分页、未混合）.
+     */
+    private DatabaseCandidates collectDatabaseCandidates(RecommendationRequest req, Long userId) {
+        // 1. 获取当前生效的数据版本
+        ActiveDataVersion planVersion = dataVersionService.getActiveVersion(DATA_TYPE_PLAN, req.getYear());
+        if (planVersion == null) {
+            throw new BusinessException(ErrorCode.DATA_NOT_FOUND,
+                    "招生年度 " + req.getYear() + " 的招生计划数据尚未发布");
         }
-        return response.getSchoolGroups().stream()
+        ActiveDataVersion historyVersion = dataVersionService.getActiveVersion(
+                DATA_TYPE_HISTORY, req.getYear() - 1);
+
+        // 2. 获取考生位次
+        final Integer candidateRank = req.getRank() != null ? req.getRank()
+                : (userId != null ? getCandidateRank(userId) : null);
+
+        // 3. 全量拉取候选池（仅硬过滤 + 用户筛选）
+        List<RecommendationPlanVO> pool = recommendationMapper.searchCandidates(
+                req, planVersion.getDataVersionId(), req.getSubjectComboIndex(), MAX_CANDIDATE_POOL);
+
+        // 4. 逐条位次感知概率 + 位次兜底 + 概率/冲刺下限过滤
+        List<PlanRecommendationResponse> candidates = buildCandidates(pool, candidateRank, req);
+
+        return new DatabaseCandidates(candidates, pool.size(),
+                "v" + planVersion.getDataVersionId(),
+                historyVersion != null ? "v" + historyVersion.getDataVersionId() : null);
+    }
+
+    private List<PlanRecommendationResponse> buildCandidates(List<RecommendationPlanVO> pool,
+                                                             Integer candidateRank,
+                                                             RecommendationRequest req) {
+        Map<Long, Integer> schoolReferenceRank = buildSchoolReferenceRank(pool);
+        List<PlanRecommendationResponse> candidates = new ArrayList<>(pool.size());
+        for (RecommendationPlanVO vo : pool) {
+            PlanRecommendationResponse plan = estimatePlan(vo, candidateRank, schoolReferenceRank);
+            if (plan == null) {
+                continue;
+            }
+            if (!PortfolioMixer.matchesProbabilityAndLabel(plan, req)) {
+                continue;
+            }
+            if (!PortfolioMixer.matchesRushFloor(plan, req)) {
+                continue;
+            }
+            candidates.add(plan);
+        }
+        return candidates;
+    }
+
+    /**
+     * 构建院校级最宽松参考位次表.
+     *
+     * <p>每个院校取其各专业参考位次（predicted_rank 优先，否则上年最低位次）中的
+     * 最大值，代表该校最容易录取的分数线，用于无位次专业的兜底估算与硬剔除。</p>
+     */
+    private static Map<Long, Integer> buildSchoolReferenceRank(List<RecommendationPlanVO> pool) {
+        Map<Long, Integer> map = new HashMap<>();
+        for (RecommendationPlanVO vo : pool) {
+            Integer own = ownReferenceRank(vo);
+            if (own == null || vo.getSchoolId() == null) {
+                continue;
+            }
+            map.merge(vo.getSchoolId(), own, Math::max);
+        }
+        return map;
+    }
+
+    /** 计划自身的参考位次：预测位次优先，否则上年最低位次；都无则 null。 */
+    private static Integer ownReferenceRank(RecommendationPlanVO vo) {
+        if (vo.getPredictedRank() != null) {
+            return vo.getPredictedRank();
+        }
+        return vo.getLastYearMinRank();
+    }
+
+    /**
+     * 将候选 VO 估算为专业推荐响应；不可达或无参考的计划返回 null 被剔除.
+     */
+    private PlanRecommendationResponse estimatePlan(RecommendationPlanVO vo,
+                                                    Integer candidateRank,
+                                                    Map<Long, Integer> schoolReferenceRank) {
+        Integer own = ownReferenceRank(vo);
+        boolean fallback = own == null;
+        Integer reference = own != null ? own
+                : (vo.getSchoolId() != null ? schoolReferenceRank.get(vo.getSchoolId()) : null);
+
+        // 全校都无位次参考，无法判定可达 → 剔除，避免臆造概率
+        if (reference == null) {
+            return null;
+        }
+
+        // 严格院校位次兜底：兜底专业若考生位次明显差于同校最宽松参考位次，直接剔除（含名校新增专业）
+        if (fallback && candidateRank != null
+                && candidateRank > reference * SCHOOL_FLOOR_MARGIN) {
+            return null;
+        }
+
+        BigDecimal probability = null;
+        String label = null;
+        BigDecimal confidence = null;
+        if (candidateRank != null) {
+            if (vo.getProbability() != null && vo.getLabel() != null) {
+                // 已有 profile 级预测结果，直接采用
+                probability = vo.getProbability();
+                label = vo.getLabel();
+            } else {
+                double spread = referenceSpread(vo, reference);
+                double scale = Math.max(MIN_PROBABILITY_SCALE, spread / 3.2);
+                double raw = 100.0 / (1.0 + Math.exp((candidateRank - reference) / scale));
+                double clamped = Math.max(1.0, Math.min(99.99, raw));
+                if (fallback) {
+                    // 无自身位次参考：概率封顶，永不进"保"
+                    clamped = Math.min(clamped, FALLBACK_PROBABILITY_CAP);
+                }
+                probability = BigDecimal.valueOf(clamped).setScale(2, RoundingMode.HALF_UP);
+                label = fallback ? labelWithoutSafe(probability) : PortfolioMixer.label(probability);
+            }
+            confidence = fallback ? BigDecimal.valueOf(0.45) : BigDecimal.valueOf(0.75);
+        }
+
+        Integer rankDiff = (own != null && candidateRank != null) ? own - candidateRank : null;
+        String planChange = SchoolGrouper.computePlanChange(vo.getPlanCount(), vo.getLastYearPlanCount());
+
+        return PlanRecommendationResponse.builder()
+                .planId(vo.getPlanId())
+                .schoolId(vo.getSchoolId())
+                .schoolName(vo.getSchoolName())
+                .schoolCode(vo.getSchoolCode())
+                .province(vo.getProvince())
+                .city(vo.getCity())
+                .schoolType(vo.getSchoolType())
+                .schoolTag(vo.getSchoolTag())
+                .majorName(vo.getMajorName())
+                .majorCategory(vo.getMajorCategory())
+                .majorSubcategory(vo.getMajorSubcategory())
+                .educationLevel(vo.getEducationLevel())
+                .enrollmentType(vo.getEnrollmentType())
+                .campusName(vo.getCampusName())
+                .campusCode(vo.getCampusCode())
+                .planCount(vo.getPlanCount())
+                .tuition(vo.getTuition())
+                .duration(vo.getDuration())
+                .planStatus(vo.getPlanStatus())
+                .subjectRequirementText(vo.getSubjectRequirementText())
+                .lastYearMinRank(vo.getLastYearMinRank())
+                .twoYearMinRank(vo.getTwoYearMinRank())
+                .threeYearMinRank(vo.getThreeYearMinRank())
+                .lastYearPlanCount(vo.getLastYearPlanCount())
+                .lastYearMinScore(vo.getLastYearMinScore())
+                .probability(probability)
+                .label(label)
+                .predictedRank(vo.getPredictedRank())
+                .rankRangeMin(vo.getRankRangeMin())
+                .rankRangeMax(vo.getRankRangeMax())
+                .confidence(confidence)
+                .rankDiff(rankDiff)
+                .planChange(planChange)
+                .build();
+    }
+
+    /** 参考位次跨度：优先用位次区间宽度，否则取参考位次的 16%。 */
+    private static double referenceSpread(RecommendationPlanVO vo, int reference) {
+        if (vo.getRankRangeMin() != null && vo.getRankRangeMax() != null
+                && vo.getRankRangeMax() > vo.getRankRangeMin()) {
+            return vo.getRankRangeMax() - vo.getRankRangeMin();
+        }
+        return Math.abs(reference) * 0.16;
+    }
+
+    /** 兜底专业标签：概率已封顶 50%，最高只能进"稳"，永不进"保"。 */
+    private static String labelWithoutSafe(BigDecimal probability) {
+        if (probability.compareTo(BigDecimal.valueOf(50)) >= 0) {
+            return "稳";
+        }
+        return "冲";
+    }
+
+    /** 冲稳保混合 + 分页，本科与不限路径共用。 */
+    private static List<PlanRecommendationResponse> mixAndPage(List<PlanRecommendationResponse> candidates,
+                                                               RecommendationRequest req) {
+        int pageNo = req.getPageNo() == null || req.getPageNo() < 1 ? 1 : req.getPageNo();
+        int pageSize = req.getRecommendationCount() != null ? req.getRecommendationCount()
+                : (req.getPageSize() != null ? req.getPageSize() : 20);
+        pageSize = Math.max(1, Math.min(MAX_PAGE_SIZE, pageSize));
+
+        List<PlanRecommendationResponse> ordered = new ArrayList<>(candidates);
+        if (PortfolioMixer.shouldMix(req)) {
+            ordered = PortfolioMixer.mix(ordered, pageSize, req);
+        } else {
+            ordered.sort(PortfolioMixer.comparator(req));
+        }
+        int from = Math.min((pageNo - 1) * pageSize, ordered.size());
+        int to = Math.min(from + pageSize, ordered.size());
+        return new ArrayList<>(ordered.subList(from, to));
+    }
+
+    private static int distinctSchools(List<PlanRecommendationResponse> plans) {
+        return (int) plans.stream()
+                .map(PlanRecommendationResponse::getSchoolId)
                 .filter(Objects::nonNull)
-                .flatMap(group -> group.getPlans().stream())
-                .collect(Collectors.toList());
+                .distinct()
+                .count();
     }
 
     private static String joinVersion(String left, String right) {
@@ -296,6 +431,7 @@ public class RecommendationService {
         target.setStableRatio(source.getStableRatio());
         target.setSafeRatio(source.getSafeRatio());
         target.setRushProbabilityMin(source.getRushProbabilityMin());
+        target.setIncludeAllCandidates(source.getIncludeAllCandidates());
         target.setSortBy(source.getSortBy());
         target.setSortDir(source.getSortDir());
         target.setPageNo(source.getPageNo());
@@ -343,7 +479,7 @@ public class RecommendationService {
                     "排序方向只能是 asc 或 desc");
         }
         if (req.getSortDir() == null || req.getSortDir().isBlank()) {
-            req.setSortDir("desc");
+            req.setSortDir("asc");
         }
         req.setSortDir(req.getSortDir().toLowerCase());
 
@@ -393,127 +529,14 @@ public class RecommendationService {
      */
     private Integer getCandidateRank(Long userId) {
         // TODO: 注入 CandidateService 后替换为实际调用
-        // 当前返回 null，意味着未登录用户的查询不会关联预测结果
         log.debug("Getting candidate rank for userId={} (placeholder)", userId);
         return null;
     }
 
-    /**
-     * 将查询结果 VO 映射为专业推荐响应 DTO.
-     *
-     * @param vo            查询结果
-     * @param candidateRank 考生位次（用于计算位次差）
-     * @return 专业推荐响应
-     */
-    private PlanRecommendationResponse mapToPlanResponse(RecommendationPlanVO vo,
-                                                          Integer candidateRank) {
-        // 计算位次差
-        Integer rankDiff = null;
-        if (vo.getPredictedRank() != null && candidateRank != null) {
-            rankDiff = vo.getPredictedRank() - candidateRank;
-        }
-
-        // 计算计划变化
-        String planChange = SchoolGrouper.computePlanChange(
-                vo.getPlanCount(), vo.getLastYearPlanCount());
-
-        // 概率: 从 prediction_result 获取，若无则使用启发式算法
-        BigDecimal probability = vo.getProbability();
-        String label = vo.getLabel();
-
-        // 若无 profile-specific 预测数据，优先使用导入数据中的当前年度预估位次计算概率。
-        if (probability == null || label == null) {
-            if (candidateRank != null && vo.getPredictedRank() != null) {
-                double scale = 8000.0;
-                double raw = 100.0 / (1.0 + Math.exp((candidateRank - vo.getPredictedRank()) / scale));
-                double clamped = Math.max(1.0, Math.min(99.99, raw));
-                probability = BigDecimal.valueOf(clamped).setScale(2, RoundingMode.HALF_UP);
-                label = labelByProbability(probability);
-            } else {
-                String code = vo.getSchoolCode();
-                // 基于学校代码层次分配确定性概率（plan_id 作为种子，保证同一计划每次结果一致）
-                long seed = vo.getPlanId() != null ? vo.getPlanId() : 0;
-                double rand = ((seed * 2654435761L) & 0x7FFFFFFF) / (double) 0x7FFFFFFF;
-                double baseProb;
-                if (code != null && code.startsWith("A")) baseProb = 0.20 + rand * 0.40;  // 公办本科 20-60%
-                else if (code != null && code.startsWith("B")) baseProb = 0.25 + rand * 0.45;  // 25-70%
-                else if (code != null && code.startsWith("C")) baseProb = 0.30 + rand * 0.45;  // 30-75%
-                else baseProb = 0.40 + rand * 0.45;  // 民办/高职 40-85%
-
-                int probInt = (int) Math.round(baseProb * 100);
-                probability = BigDecimal.valueOf(probInt);
-                label = labelByProbability(probability);
-            }
-        }
-
-        return PlanRecommendationResponse.builder()
-                // 基础计划信息
-                .planId(vo.getPlanId())
-                .schoolId(vo.getSchoolId())
-                .schoolName(vo.getSchoolName())
-                .schoolCode(vo.getSchoolCode())
-                .province(vo.getProvince())
-                .city(vo.getCity())
-                .schoolType(vo.getSchoolType())
-                .schoolTag(vo.getSchoolTag())
-                .majorName(vo.getMajorName())
-                .majorCategory(vo.getMajorCategory())
-                .majorSubcategory(vo.getMajorSubcategory())
-                .educationLevel(vo.getEducationLevel())
-                .enrollmentType(vo.getEnrollmentType())
-                .campusName(vo.getCampusName())
-                .campusCode(vo.getCampusCode())
-                .planCount(vo.getPlanCount())
-                .tuition(vo.getTuition())
-                .duration(vo.getDuration())
-                .planStatus(vo.getPlanStatus())
-                .subjectRequirementText(vo.getSubjectRequirementText())
-                // 历史录取数据
-                .lastYearMinRank(vo.getLastYearMinRank())
-                .twoYearMinRank(vo.getTwoYearMinRank())
-                .threeYearMinRank(vo.getThreeYearMinRank())
-                .lastYearPlanCount(vo.getLastYearPlanCount())
-                .lastYearMinScore(vo.getLastYearMinScore())
-                // 预测数据
-                .probability(probability)
-                .label(label)
-                .predictedRank(vo.getPredictedRank())
-                .rankRangeMin(vo.getRankRangeMin())
-                .rankRangeMax(vo.getRankRangeMax())
-                .confidence(null)
-                // 计算字段
-                .rankDiff(rankDiff)
-                .planChange(planChange)
-                .build();
-    }
-
-    private static String labelByProbability(BigDecimal probability) {
-        if (probability.compareTo(BigDecimal.valueOf(80)) >= 0) {
-            return "保";
-        }
-        if (probability.compareTo(BigDecimal.valueOf(50)) >= 0) {
-            return "稳";
-        }
-        return "冲";
-    }
-
-    private static boolean matchesRushFloor(PlanRecommendationResponse plan, RecommendationRequest req) {
-        return !"冲".equals(plan.getLabel())
-                || plan.getProbability() == null
-                || plan.getProbability().compareTo(rushProbabilityMin(req)) >= 0;
-    }
-
-    private static BigDecimal rushProbabilityMin(RecommendationRequest req) {
-        BigDecimal configured = req.getRushProbabilityMin();
-        if (configured == null) {
-            return DEFAULT_RUSH_PROBABILITY_MIN;
-        }
-        if (configured.compareTo(BigDecimal.ZERO) < 0) {
-            return BigDecimal.ZERO;
-        }
-        if (configured.compareTo(BigDecimal.valueOf(100)) > 0) {
-            return BigDecimal.valueOf(100);
-        }
-        return configured;
+    /** 本科数据库候选池收集结果 */
+    private record DatabaseCandidates(List<PlanRecommendationResponse> candidates,
+                                      long eligibleCount,
+                                      String planDataVersion,
+                                      String historyDataVersion) {
     }
 }

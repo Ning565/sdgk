@@ -8,6 +8,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,7 +29,7 @@ class SpecializedModelRecommendationServiceTest {
         request.setPageNo(1);
         request.setPageSize(96);
         request.setSortBy("probability");
-        request.setSortDir("desc");
+        request.setSortDir("asc");
 
         RecommendationResponse response = service.search(request);
 
@@ -72,7 +73,7 @@ class SpecializedModelRecommendationServiceTest {
         request.setSafeRatio(BigDecimal.valueOf(0.30));
         request.setRushProbabilityMin(BigDecimal.valueOf(20));
         request.setSortBy("probability");
-        request.setSortDir("desc");
+        request.setSortDir("asc");
 
         RecommendationResponse response = service.search(request);
         List<PlanRecommendationResponse> plans = response.getSchoolGroups().stream()
@@ -83,6 +84,28 @@ class SpecializedModelRecommendationServiceTest {
         assertTrue(plans.stream()
                 .filter(plan -> "冲".equals(plan.getLabel()))
                 .allMatch(plan -> plan.getProbability().compareTo(BigDecimal.valueOf(20)) >= 0));
+        List<PlanRecommendationResponse> rushPlans = plans.stream()
+                .filter(plan -> "冲".equals(plan.getLabel()))
+                .toList();
+        assertEquals(12, rushPlans.size());
+        BigDecimal lowestRushProbability = rushPlans.stream()
+                .map(PlanRecommendationResponse::getProbability)
+                .min(BigDecimal::compareTo)
+                .orElseThrow();
+        assertTrue(lowestRushProbability.compareTo(BigDecimal.valueOf(30)) < 0);
+        List<PlanRecommendationResponse> safePlans = plans.stream()
+                .filter(plan -> "保".equals(plan.getLabel()))
+                .toList();
+        long safeAbove90 = safePlans.stream()
+                .filter(plan -> plan.getProbability().compareTo(BigDecimal.valueOf(90)) >= 0)
+                .count();
+        long safeBelow90 = safePlans.size() - safeAbove90;
+        assertTrue(safeAbove90 >= safeBelow90);
+        assertEquals(plans.size(), plans.stream()
+                .map(PlanRecommendationResponse::getRecommendRank)
+                .filter(Objects::nonNull)
+                .distinct()
+                .count());
     }
 
     @Test
@@ -100,7 +123,7 @@ class SpecializedModelRecommendationServiceTest {
         request.setPageNo(1);
         request.setRecommendationCount(500);
         request.setSortBy("probability");
-        request.setSortDir("desc");
+        request.setSortDir("asc");
 
         RecommendationResponse response = service.search(request);
         List<PlanRecommendationResponse> plans = response.getSchoolGroups().stream()
@@ -122,4 +145,5 @@ class SpecializedModelRecommendationServiceTest {
                         || plan.getSubjectRequirementText().isBlank()
                         || "不限".equals(plan.getSubjectRequirementText())));
     }
+
 }

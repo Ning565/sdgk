@@ -42,13 +42,18 @@ export interface PlanItem {
   lastYearMinRank?: number;
   twoYearMinRank?: number;
   threeYearMinRank?: number;
+  lastYearPlanCount?: number;
   label?: string;
+  recommend_rank?: number;
   predictedRank?: number;
 }
 
 export interface RecommendationResult {
   schoolGroups: SchoolGroup[];
   totalPlans: number;
+  eligiblePlanCount?: number;
+  candidatePlanCount?: number;
+  recommendedPlanCount?: number;
   totalSchools: number;
 }
 

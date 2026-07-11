@@ -25,6 +25,15 @@ public class RecommendationResponse {
     /** 符合条件的专业总数 */
     private Long totalPlans;
 
+    /** Eligible: 通过基础资格、偏好、排除、地域等规则的专业数量 */
+    private Long eligiblePlanCount;
+
+    /** Candidate: 进入当前候选池、可被本次推荐抽取的专业数量 */
+    private Long candidatePlanCount;
+
+    /** Recommended: 本次主动推荐展示的专业数量 */
+    private Integer recommendedPlanCount;
+
     /** 符合条件的院校总数 */
     private Integer totalSchools;
 

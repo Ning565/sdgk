@@ -132,6 +132,9 @@ public class RecommendationRequest {
     @Max(100)
     private BigDecimal rushProbabilityMin;
 
+    /** 查看完整候选池；true 时冲稳保比例只作为统计含义，不裁剪展示结果 */
+    private Boolean includeAllCandidates;
+
     // ==================== 排序与分页 ====================
 
     /** 排序字段: probability / rankDiff / lastYearMinRank / planCount / tuition */

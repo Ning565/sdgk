@@ -127,9 +127,13 @@ export interface RecommendationDTO {
   schoolTag?: string;
   probability?: number;
   label?: string;
+  recommend_rank?: number;
   planChange?: string;
   lastYearMinRank?: number;
   predictedRank?: number;
+  twoYearMinRank?: number;
+  threeYearMinRank?: number;
+  lastYearPlanCount?: number;
 }
 
 export interface SchoolRecommendationGroupDTO {
@@ -149,6 +153,9 @@ export interface SchoolRecommendationGroupDTO {
 export interface RecommendationResponseDTO {
   schoolGroups: SchoolRecommendationGroupDTO[];
   totalPlans: number;
+  eligiblePlanCount?: number;
+  candidatePlanCount?: number;
+  recommendedPlanCount?: number;
   totalSchools: number;
   planDataVersion?: string;
   historyDataVersion?: string;
@@ -188,6 +195,7 @@ export interface RecommendationRequest {
   stableRatio?: number;
   safeRatio?: number;
   rushProbabilityMin?: number;
+  includeAllCandidates?: boolean;
   sortBy?: string;
   sortDir?: string;
   pageNo?: number;
@@ -217,6 +225,13 @@ export interface VolunteerFormDetailDTO extends VolunteerFormDTO {
   stats?: { chongCount: number; wenCount: number; baoCount: number };
 }
 
+export interface VolunteerExportResponseDTO {
+  fileUrl: string;
+  fileName: string;
+  exportRecordId: number;
+  exportedAt: string;
+}
+
 export interface VolunteerChoiceDTO {
   id: string | number;
   formId?: string | number;
@@ -232,6 +247,8 @@ export interface VolunteerChoiceDTO {
   city?: string;
   schoolType?: string;
   enrollmentType?: string;
+  majorCategory?: string;
+  majorSubcategory?: string;
   probability?: number;
   label?: string;
   planCount?: number;

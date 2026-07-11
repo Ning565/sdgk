@@ -1,5 +1,6 @@
 package com.example.admission.recommendation.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -119,4 +120,8 @@ public class PlanRecommendationResponse {
 
     /** 计划变化: 增加/减少/持平/新增 */
     private String planChange;
+
+    /** 本次主动推荐顺序；仅推荐列表有值，全部候选视图可为空 */
+    @JsonProperty("recommend_rank")
+    private Integer recommendRank;
 }
