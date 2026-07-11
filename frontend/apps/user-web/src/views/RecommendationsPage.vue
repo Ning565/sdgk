@@ -752,7 +752,7 @@ function labelType(label?: string) {
       <div class="volunteer-float__count">{{ currentFormCount }}</div>
       <div>
         <div class="volunteer-float__title">{{ currentFormName }}</div>
-        <div class="volunteer-float__sub">已加入 / 96</div>
+        <div class="volunteer-float__sub">已加入 / {{ volunteerStore.currentForm?.maxItems != null ? volunteerStore.currentForm.maxItems : '不限' }}</div>
       </div>
     </div>
   </div>

@@ -24,11 +24,18 @@ function filledCount(form: any) {
 }
 
 function totalCount(form: any) {
-  return form.totalChoices ?? 96;
+  return form.maxItems != null ? form.maxItems : 96;
+}
+
+function capacityLabel(form: any) {
+  return form.maxItems != null ? String(form.maxItems) : '不限';
 }
 
 function progress(form: any) {
-  return Math.round((filledCount(form) / totalCount(form)) * 100);
+  const max = form.maxItems;
+  if (max == null) return 0; // 不限容量时不显示进度条
+  const filled = filledCount(form);
+  return Math.min(100, Math.round((filled / max) * 100));
 }
 
 onMounted(() => {
@@ -91,12 +98,13 @@ async function handleCreate() {
             <div class="form-card__stat">
               <span class="form-card__stat-label">已填志愿</span>
               <span class="form-card__stat-value">
-                {{ filledCount(form) }} / {{ totalCount(form) }}
+                {{ filledCount(form) }} / {{ capacityLabel(form) }}
               </span>
             </div>
             <el-progress
+              v-if="form.maxItems != null"
               :percentage="progress(form)"
-              :status="filledCount(form) === totalCount(form) ? 'success' : undefined"
+              :status="filledCount(form) >= (form.maxItems ?? 0) ? 'success' : undefined"
             />
           </div>
           <div class="form-card__footer">

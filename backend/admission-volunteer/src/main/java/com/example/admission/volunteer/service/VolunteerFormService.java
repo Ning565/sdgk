@@ -42,8 +42,8 @@ public class VolunteerFormService {
 
     /** 每个用户每年最多志愿表数 */
     private static final int MAX_FORMS_PER_YEAR = 10;
-    /** 志愿表最大志愿项数 */
-    private static final int MAX_ITEMS = 96;
+    /** 志愿表默认容量（用户可修改，null = 不限） */
+    private static final int DEFAULT_MAX_ITEMS = 96;
     /** 至少保留一份志愿表 */
     private static final int MIN_FORMS = 1;
     /** 幂等去重有效期（毫秒） */
@@ -98,6 +98,7 @@ public class VolunteerFormService {
                 .name(form.getName())
                 .version(form.getVersion())
                 .itemCount(form.getItemCount())
+                .maxItems(form.getMaxItems())
                 .status(form.getStatus())
                 .createdAt(form.getCreatedAt())
                 .updatedAt(form.getUpdatedAt())
@@ -132,6 +133,7 @@ public class VolunteerFormService {
         form.setName(name != null && !name.isBlank() ? name : "志愿表" + (count + 1));
         form.setVersion(1);
         form.setItemCount(0);
+        form.setMaxItems(DEFAULT_MAX_ITEMS);
         form.setStatus(VolunteerForm.STATUS_ACTIVE);
         form.setCreatedAt(LocalDateTime.now());
         form.setUpdatedAt(LocalDateTime.now());
@@ -172,6 +174,7 @@ public class VolunteerFormService {
         newForm.setName(request.getNewName());
         newForm.setVersion(1);
         newForm.setItemCount(0);
+        newForm.setMaxItems(source.getMaxItems() != null ? source.getMaxItems() : DEFAULT_MAX_ITEMS);
         newForm.setStatus(VolunteerForm.STATUS_ACTIVE);
         newForm.setCreatedAt(LocalDateTime.now());
         newForm.setUpdatedAt(LocalDateTime.now());
@@ -278,8 +281,8 @@ public class VolunteerFormService {
             throw new BusinessException(ErrorCode.VOLUNTEER_FORM_LOCKED);
         }
 
-        // 检查上限
-        if (form.getItemCount() >= MAX_ITEMS) {
+        // 检查上限（maxItems 为 null 时不限容量）
+        if (form.getMaxItems() != null && form.getItemCount() >= form.getMaxItems()) {
             throw new BusinessException(ErrorCode.VOLUNTEER_ITEM_LIMIT_REACHED);
         }
 
@@ -551,6 +554,22 @@ public class VolunteerFormService {
         recordIdempotent(operationKey);
     }
 
+    /**
+     * 修改志愿表容量（null = 不限）.
+     */
+    @Transactional
+    public VolunteerFormResponse updateMaxItems(Long formId, Integer maxItems) {
+        VolunteerForm form = getFormWithOwnershipCheck(formId);
+        if (maxItems != null && maxItems < 1) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "容量至少为 1");
+        }
+        form.setMaxItems(maxItems);
+        form.setUpdatedAt(LocalDateTime.now());
+        volunteerFormMapper.updateById(form);
+        log.info("Volunteer form maxItems updated: formId={}, maxItems={}", formId, maxItems);
+        return toResponse(form);
+    }
+
     // ==================== 内部方法 ====================
 
     /**
@@ -637,6 +656,7 @@ public class VolunteerFormService {
                 .name(form.getName())
                 .version(form.getVersion())
                 .itemCount(form.getItemCount())
+                .maxItems(form.getMaxItems())
                 .status(form.getStatus())
                 .createdAt(form.getCreatedAt())
                 .updatedAt(form.getUpdatedAt())

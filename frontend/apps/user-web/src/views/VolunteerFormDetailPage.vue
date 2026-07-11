@@ -40,8 +40,53 @@ function filledCount() {
   return store.currentForm?.itemCount ?? store.currentForm?.filledChoices ?? formItems.value.length;
 }
 
+const defaultMaxItems = 96;
+
 function totalCount() {
-  return store.currentForm?.totalChoices ?? 96;
+  return store.currentForm?.maxItems ?? defaultMaxItems;
+}
+
+function capacityDisplay() {
+  const max = store.currentForm?.maxItems;
+  return max != null ? max : '不限';
+}
+
+async function handleUpdateMaxItems(maxItems: number | null) {
+  if (!store.currentForm) return;
+  try {
+    const res = await volunteerApi.updateMaxItems(route.params.formId as string, maxItems);
+    if (store.currentForm && res.data) {
+      store.currentForm.maxItems = res.data.maxItems;
+      store.currentForm.itemCount = res.data.itemCount;
+    }
+    ElMessage.success(maxItems != null ? `容量已设为 ${maxItems}` : '容量已设为不限');
+  } catch {
+    ElMessage.error('修改失败');
+  }
+}
+
+async function handleSetCapacity() {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '请输入志愿表容量（留空为不限）',
+      '设置容量',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        inputPattern: /^\d*$/,
+        inputErrorMessage: '请输入数字或留空',
+        inputValue: store.currentForm?.maxItems != null ? String(store.currentForm.maxItems) : '',
+      }
+    );
+    const num = value && value.trim() ? Number(value.trim()) : null;
+    if (num != null && (num < 1 || !Number.isFinite(num))) {
+      ElMessage.warning('容量至少为 1');
+      return;
+    }
+    await handleUpdateMaxItems(num);
+  } catch {
+    // 取消
+  }
 }
 
 function operationId(action: string, itemId: string | number) {
@@ -270,13 +315,14 @@ async function handleExport(confirmWithErrors = false) {
               </el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="志愿进度">
-              {{ filledCount() }} / {{ totalCount() }}
+              {{ filledCount() }} / {{ capacityDisplay() }}
+              <el-button type="primary" link size="small" style="margin-left:6px" @click.stop="handleSetCapacity">修改容量</el-button>
             </el-descriptions-item>
             <el-descriptions-item label="更新时间">{{ store.currentForm.updatedAt }}</el-descriptions-item>
           </el-descriptions>
           <div class="form-structure">
             <div class="form-structure__main">
-              <strong>已选 {{ filledCount() }} / {{ totalCount() }}</strong>
+              <strong>已选 {{ filledCount() }} / {{ capacityDisplay() }}</strong>
               <span>山东平行志愿按当前顺序投档，请把更想去的专业排在前面。</span>
             </div>
             <div class="form-structure__stats">

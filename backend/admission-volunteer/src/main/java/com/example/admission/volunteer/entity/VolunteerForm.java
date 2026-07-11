@@ -31,6 +31,9 @@ public class VolunteerForm {
     /** 志愿项数量 */
     private Integer itemCount;
 
+    /** 用户设置的容量上限（NULL = 不限） */
+    private Integer maxItems;
+
     /** 状态: ACTIVE / ARCHIVED */
     private String status;
 

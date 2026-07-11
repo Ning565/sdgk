@@ -31,7 +31,25 @@ public class VolunteerController {
     public ApiResponse<VolunteerFormResponse> createForm(@RequestBody Map<String, Object> body) {
         Integer year = (Integer) body.get("year");
         String name = (String) body.get("name");
-        return ApiResponse.success(volunteerFormService.createForm(year, name));
+        VolunteerFormResponse response = volunteerFormService.createForm(year, name);
+        // 允许创建时指定容量
+        if (body.containsKey("maxItems")) {
+            Object maxItemsObj = body.get("maxItems");
+            Integer maxItems = maxItemsObj instanceof Number ? ((Number) maxItemsObj).intValue() : null;
+            if (maxItems != null) {
+                response = volunteerFormService.updateMaxItems(response.getId(), maxItems);
+            }
+        }
+        return ApiResponse.success(response);
+    }
+
+    /** 修改志愿表容量（null = 不限） */
+    @PatchMapping("/{formId}/max-items")
+    public ApiResponse<VolunteerFormResponse> updateMaxItems(@PathVariable("formId") Long formId,
+                                                              @RequestBody Map<String, Object> body) {
+        Object maxItemsObj = body.get("maxItems");
+        Integer maxItems = maxItemsObj instanceof Number ? ((Number) maxItemsObj).intValue() : null;
+        return ApiResponse.success(volunteerFormService.updateMaxItems(formId, maxItems));
     }
 
     /** 志愿表详情 */

@@ -35,6 +35,10 @@ export const volunteerApi = {
     return httpClient.patch<void>(`/volunteer-forms/${formId}/name`, { name });
   },
 
+  updateMaxItems(formId: string, maxItems: number | null) {
+    return httpClient.patch<VolunteerFormDTO>(`/volunteer-forms/${formId}/max-items`, { maxItems });
+  },
+
   copyForm(formId: string, newName: string, clientOperationId?: string) {
     return httpClient.post<VolunteerFormDTO>(`/volunteer-forms/${formId}/copy`, { newName, clientOperationId });
   },

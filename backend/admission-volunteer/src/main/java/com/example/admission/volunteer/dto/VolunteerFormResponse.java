@@ -22,6 +22,7 @@ public class VolunteerFormResponse {
     private String name;
     private Integer version;
     private Integer itemCount;
+    private Integer maxItems;
     private String status;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

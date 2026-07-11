@@ -214,6 +214,7 @@ export interface VolunteerFormDTO {
   itemCount?: number;
   status: FormStatus | 'ACTIVE' | 'ARCHIVED';
   totalChoices?: number;
+  maxItems?: number | null;
   filledChoices?: number;
   createdAt: string;
   updatedAt: string;
