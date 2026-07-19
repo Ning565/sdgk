@@ -39,6 +39,8 @@ public class VolunteerItem {
     private String subjectRequirementText;
     private String planStatus;
     private Integer lastYearMinRank;
+    private Integer twoYearMinRank;
+    private Integer threeYearMinRank;
     private Integer predictedRank;
 
     /** 排序序号（1-N 连续） */

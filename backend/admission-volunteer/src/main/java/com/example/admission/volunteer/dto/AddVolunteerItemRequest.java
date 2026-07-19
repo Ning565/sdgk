@@ -37,5 +37,7 @@ public class AddVolunteerItemRequest {
     private String subjectRequirementText;
     private String planStatus;
     private Integer lastYearMinRank;
+    private Integer twoYearMinRank;
+    private Integer threeYearMinRank;
     private Integer predictedRank;
 }

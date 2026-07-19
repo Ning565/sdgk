@@ -356,6 +356,8 @@ public class VolunteerFormService {
         item.setSubjectRequirementText(request.getSubjectRequirementText());
         item.setPlanStatus(request.getPlanStatus());
         item.setLastYearMinRank(request.getLastYearMinRank());
+        item.setTwoYearMinRank(request.getTwoYearMinRank());
+        item.setThreeYearMinRank(request.getThreeYearMinRank());
         item.setPredictedRank(request.getPredictedRank());
     }
 
@@ -376,6 +378,8 @@ public class VolunteerFormService {
         target.setSubjectRequirementText(source.getSubjectRequirementText());
         target.setPlanStatus(source.getPlanStatus());
         target.setLastYearMinRank(source.getLastYearMinRank());
+        target.setTwoYearMinRank(source.getTwoYearMinRank());
+        target.setThreeYearMinRank(source.getThreeYearMinRank());
         target.setPredictedRank(source.getPredictedRank());
     }
 
@@ -698,6 +702,8 @@ public class VolunteerFormService {
                 .subjectRequirementText(subjectRequirementText)
                 .planStatus(planStatus)
                 .lastYearMinRank(item.getLastYearMinRank())
+                .twoYearMinRank(item.getTwoYearMinRank())
+                .threeYearMinRank(item.getThreeYearMinRank())
                 .predictedRank(item.getPredictedRank())
                 .sortOrder(item.getSortOrder())
                 .note(item.getNote())

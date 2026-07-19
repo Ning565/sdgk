@@ -58,6 +58,8 @@ public class VolunteerFormDetailResponse {
         private String subjectRequirementText;
         private String planStatus;
         private Integer lastYearMinRank;
+        private Integer twoYearMinRank;
+        private Integer threeYearMinRank;
         private Integer predictedRank;
         private Integer sortOrder;
         private String note;

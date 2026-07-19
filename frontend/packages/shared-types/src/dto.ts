@@ -259,6 +259,8 @@ export interface VolunteerChoiceDTO {
   subjectRequirementText?: string;
   planStatus?: string;
   lastYearMinRank?: number;
+  twoYearMinRank?: number;
+  threeYearMinRank?: number;
   predictedRank?: number;
   batch?: AdmissionBatch;
   isObeyAdjustment?: boolean;

@@ -134,6 +134,8 @@ export const useVolunteerStore = defineStore('volunteer', () => {
       subjectRequirementText: plan.subjectRequirementText,
       planStatus: plan.planStatus,
       lastYearMinRank: plan.lastYearMinRank,
+      twoYearMinRank: plan.twoYearMinRank,
+      threeYearMinRank: plan.threeYearMinRank,
       predictedRank: plan.predictedRank,
     });
     currentForm.value = res.data;

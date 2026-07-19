@@ -17,6 +17,7 @@ import com.example.admission.export.dto.ExportRequest;
 import com.example.admission.export.dto.ExportResponse;
 import com.example.admission.export.entity.ExportRecord;
 import com.example.admission.export.mapper.ExportRecordMapper;
+import com.example.admission.recommendation.service.SpecializedModelRecommendationService;
 import com.example.admission.volunteer.entity.VolunteerForm;
 import com.example.admission.volunteer.entity.VolunteerItem;
 import com.example.admission.volunteer.mapper.VolunteerFormMapper;
@@ -66,6 +67,7 @@ public class ExportService {
     private final CandidateService candidateService;
     private final EnrollmentPlanService enrollmentPlanService;
     private final StandardMajorMapper standardMajorMapper;
+    private final SpecializedModelRecommendationService specializedModelRecommendationService;
 
     @Value("${app.export.base-dir:data/export}")
     private String exportBaseDir;
@@ -113,6 +115,8 @@ public class ExportService {
         List<Long> planIds = items.stream().map(VolunteerItem::getPlanId).filter(Objects::nonNull).distinct().toList();
         Map<Long, EnrollmentPlan> planMap = enrollmentPlanService.listPlansByIds(planIds).stream()
                 .collect(Collectors.toMap(EnrollmentPlan::getId, p -> p, (a, b) -> a));
+        Map<Long, SpecializedModelRecommendationService.HistoricalRanks> modelRankMap =
+                specializedModelRecommendationService.findHistoricalRanks(new HashSet<>(planIds));
         List<Long> schoolIds = Stream.concat(
                         items.stream().map(VolunteerItem::getSchoolId),
                         planMap.values().stream().map(EnrollmentPlan::getSchoolId))
@@ -128,8 +132,9 @@ public class ExportService {
         try {
             Files.createDirectories(dirPath);
             filePath = dirPath.resolve(fileName).toString();
-            generateExcel(filePath, form, items, profile, planMap, schoolMap, standardMajorMap);
-            generateHtml(toHtmlPath(filePath), form, items, profile, planMap, schoolMap, standardMajorMap);
+            generateExcel(filePath, form, items, profile, planMap, schoolMap, standardMajorMap, modelRankMap);
+            generateHtml(toHtmlPath(filePath), form, items, profile, planMap, schoolMap,
+                    standardMajorMap, modelRankMap);
         } catch (IOException e) {
             log.error("Failed to generate Excel: formId={}", formId, e);
             throw new BusinessException(ErrorCode.EXPORT_FAILED, "生成Excel文件失败: " + e.getMessage());
@@ -212,13 +217,15 @@ public class ExportService {
     private void generateExcel(String filePath, VolunteerForm form, List<VolunteerItem> items,
                                 CandidateProfile profile, Map<Long, EnrollmentPlan> planMap,
                                 Map<Long, School> schoolMap,
-                                Map<String, StandardMajor> standardMajorMap) throws IOException {
+                                Map<String, StandardMajor> standardMajorMap,
+                                Map<Long, SpecializedModelRecommendationService.HistoricalRanks> modelRankMap)
+            throws IOException {
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             // Sheet 1: 考生信息
             createCandidateSheet(workbook, form, profile);
 
             // Sheet 2: 志愿表
-            createVolunteerSheet(workbook, form, items, planMap, schoolMap, standardMajorMap);
+            createVolunteerSheet(workbook, form, items, planMap, schoolMap, standardMajorMap, modelRankMap);
 
             // Sheet 3: 检查结果
             createCheckSheet(workbook, form.getId(), planMap);
@@ -269,7 +276,8 @@ public class ExportService {
     private void createVolunteerSheet(XSSFWorkbook workbook, VolunteerForm form, List<VolunteerItem> items,
                                        Map<Long, EnrollmentPlan> planMap,
                                        Map<Long, School> schoolMap,
-                                       Map<String, StandardMajor> standardMajorMap) {
+                                       Map<String, StandardMajor> standardMajorMap,
+                                       Map<Long, SpecializedModelRecommendationService.HistoricalRanks> modelRankMap) {
         Sheet sheet = workbook.createSheet("志愿表");
         CellStyle headerStyle = createHeaderStyle(workbook);
         CellStyle dataStyle = createDataStyle(workbook);
@@ -327,14 +335,10 @@ public class ExportService {
 
             boolean newPlan = "NEW".equalsIgnoreCase(text(item.getPlanStatus(),
                     plan != null ? plan.getPlanStatus() : null));
-            Integer lastYearRank = item.getLastYearMinRank() != null
-                    ? item.getLastYearMinRank()
-                    : plan != null ? plan.getLastYearMinRank() : null;
-            createCell(row, col++, formatHistoricalRank(lastYearRank, newPlan), rowStyle);
-            createCell(row, col++, formatHistoricalRank(
-                    plan != null ? plan.getTwoYearMinRank() : null, newPlan), rowStyle);
-            createCell(row, col, formatHistoricalRank(
-                    plan != null ? plan.getThreeYearMinRank() : null, newPlan), rowStyle);
+            HistoricalRankValues ranks = resolveHistoricalRanks(item, plan, modelRankMap);
+            createCell(row, col++, formatHistoricalRank(ranks.lastYear(), newPlan), rowStyle);
+            createCell(row, col++, formatHistoricalRank(ranks.twoYearsAgo(), newPlan), rowStyle);
+            createCell(row, col, formatHistoricalRank(ranks.threeYearsAgo(), newPlan), rowStyle);
         }
 
         // 设置列宽
@@ -358,10 +362,45 @@ public class ExportService {
         return rank != null ? String.valueOf(rank) : "-";
     }
 
+    private HistoricalRankValues resolveHistoricalRanks(
+            VolunteerItem item,
+            EnrollmentPlan plan,
+            Map<Long, SpecializedModelRecommendationService.HistoricalRanks> modelRankMap) {
+        SpecializedModelRecommendationService.HistoricalRanks modelRanks =
+                modelRankMap.get(item.getPlanId());
+        return new HistoricalRankValues(
+                firstNonNull(item.getLastYearMinRank(),
+                        plan != null ? plan.getLastYearMinRank() : null,
+                        modelRanks != null ? modelRanks.lastYearMinRank() : null),
+                firstNonNull(item.getTwoYearMinRank(),
+                        plan != null ? plan.getTwoYearMinRank() : null,
+                        modelRanks != null ? modelRanks.twoYearMinRank() : null),
+                firstNonNull(item.getThreeYearMinRank(),
+                        plan != null ? plan.getThreeYearMinRank() : null,
+                        modelRanks != null ? modelRanks.threeYearMinRank() : null));
+    }
+
+    @SafeVarargs
+    private static <T> T firstNonNull(T... values) {
+        for (T value : values) {
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    private record HistoricalRankValues(
+            Integer lastYear,
+            Integer twoYearsAgo,
+            Integer threeYearsAgo
+    ) {
+    }
+
     void generateHtml(String filePath, VolunteerForm form, List<VolunteerItem> items,
                       CandidateProfile profile, Map<Long, EnrollmentPlan> planMap,
                       Map<Long, School> schoolMap,
-                      Map<String, StandardMajor> standardMajorMap) throws IOException {
+                      Map<String, StandardMajor> standardMajorMap,
+                      Map<Long, SpecializedModelRecommendationService.HistoricalRanks> modelRankMap)
+            throws IOException {
         int year = form.getYear() != null ? form.getYear() : LocalDateTime.now().getYear();
         long reachCount = items.stream().filter(i -> "冲".equals(i.getLabel())).count();
         long matchCount = items.stream().filter(i -> "稳".equals(i.getLabel())).count();
@@ -377,9 +416,7 @@ public class ExportService {
             String label = text(item.getLabel(), "未分类");
             boolean newPlan = "NEW".equalsIgnoreCase(text(item.getPlanStatus(),
                     plan != null ? plan.getPlanStatus() : null));
-            Integer lastYearRank = item.getLastYearMinRank() != null
-                    ? item.getLastYearMinRank()
-                    : plan != null ? plan.getLastYearMinRank() : null;
+            HistoricalRankValues ranks = resolveHistoricalRanks(item, plan, modelRankMap);
             String searchText = String.join(" ", schoolName, majorName, text(item.getSchoolCode()),
                     text(item.getMajorCode()), schoolType);
 
@@ -402,11 +439,9 @@ public class ExportService {
                     .append("<td>").append(htmlEscape(formatTuition(item.getTuition(),
                             plan != null ? plan.getTuition() : null))).append("</td>")
                     .append("<td>").append(htmlEscape(getMajorSubcategory(plan, standardMajorMap))).append("</td>")
-                    .append("<td class=\"rank\">").append(htmlEscape(formatHistoricalRank(lastYearRank, newPlan))).append("</td>")
-                    .append("<td class=\"rank\">").append(htmlEscape(formatHistoricalRank(
-                            plan != null ? plan.getTwoYearMinRank() : null, newPlan))).append("</td>")
-                    .append("<td class=\"rank\">").append(htmlEscape(formatHistoricalRank(
-                            plan != null ? plan.getThreeYearMinRank() : null, newPlan))).append("</td></tr>");
+                    .append("<td class=\"rank\">").append(htmlEscape(formatHistoricalRank(ranks.lastYear(), newPlan))).append("</td>")
+                    .append("<td class=\"rank\">").append(htmlEscape(formatHistoricalRank(ranks.twoYearsAgo(), newPlan))).append("</td>")
+                    .append("<td class=\"rank\">").append(htmlEscape(formatHistoricalRank(ranks.threeYearsAgo(), newPlan))).append("</td></tr>");
         }
 
         String template = """
@@ -586,13 +621,16 @@ public class ExportService {
         Cell cell = row.createCell(col);
         cell.setCellStyle(style);
         if (value != null && !value.isEmpty()) {
-            // 公式注入防护: 以 = + - @ 开头的文本前加单引号
-            char firstChar = value.charAt(0);
-            if (FORMULA_CHARS.contains(firstChar)) {
-                value = "'" + value;
-            }
-            cell.setCellValue(value);
+            cell.setCellValue(safeCellText(value));
         }
+    }
+
+    static String safeCellText(String value) {
+        if (value == null || value.isEmpty()) return value;
+        // 公式注入防护；单独的占位符“-”不是公式，不应显示多余单引号。
+        return value.length() > 1 && FORMULA_CHARS.contains(value.charAt(0))
+                ? "'" + value
+                : value;
     }
 
     private CellStyle createHeaderStyle(XSSFWorkbook workbook) {

@@ -9,10 +9,25 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class SpecializedModelRecommendationServiceTest {
+
+    @Test
+    void findsThreeYearRanksByFileModelPlanId() {
+        SpecializedModelRecommendationService service = new SpecializedModelRecommendationService();
+        ReflectionTestUtils.setField(service, "modelPath",
+                "../../data/organized/modeling_outputs/specialized_rank_model_2026.csv");
+
+        var ranks = service.findHistoricalRanks(Set.of(8058871231L)).get(8058871231L);
+
+        assertNotNull(ranks);
+        assertEquals(520308, ranks.lastYearMinRank());
+        assertEquals(515388, ranks.twoYearMinRank());
+        assertEquals(502374, ranks.threeYearMinRank());
+    }
 
     @Test
     void searchReturnsAtLeastNinetySixSpecializedRecommendations() {

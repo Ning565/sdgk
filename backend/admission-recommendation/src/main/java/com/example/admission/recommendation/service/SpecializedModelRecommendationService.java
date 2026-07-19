@@ -62,6 +62,29 @@ public class SpecializedModelRecommendationService {
         return MODEL_VERSION;
     }
 
+    /**
+     * 按文件模型计划 ID 批量查询近三年最低位次，供志愿快照和导出补全使用。
+     */
+    public Map<Long, HistoricalRanks> findHistoricalRanks(Set<Long> planIds) {
+        if (planIds == null || planIds.isEmpty() || !isAvailable()) {
+            return Map.of();
+        }
+        return loadPlans().stream()
+                .filter(plan -> planIds.contains(plan.planId))
+                .collect(Collectors.toMap(
+                        ModelPlan::planId,
+                        plan -> new HistoricalRanks(
+                                plan.lastYearMinRank, plan.twoYearMinRank, plan.threeYearMinRank),
+                        (a, b) -> a));
+    }
+
+    public record HistoricalRanks(
+            Integer lastYearMinRank,
+            Integer twoYearMinRank,
+            Integer threeYearMinRank
+    ) {
+    }
+
     public RecommendationResponse search(RecommendationRequest req) {
         List<PlanRecommendationResponse> eligibleAll = collectAll(req);
         List<PlanRecommendationResponse> filtered = eligibleAll.stream()
