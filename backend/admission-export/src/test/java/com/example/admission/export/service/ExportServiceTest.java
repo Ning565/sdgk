@@ -3,8 +3,10 @@ package com.example.admission.export.service;
 import com.example.admission.volunteer.entity.VolunteerForm;
 import com.example.admission.volunteer.entity.VolunteerItem;
 import com.example.admission.recommendation.service.SpecializedModelRecommendationService;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +34,48 @@ class ExportServiceTest {
     void historicalRankUsesNewForEveryNewPlanColumn() {
         assertEquals("新增", ExportService.formatHistoricalRank(123456, true));
         assertEquals("新增", ExportService.formatHistoricalRank(null, true));
+    }
+
+    @Test
+    void historicalPlanCountUsesPeopleUnitAndNewFallback() {
+        assertEquals("40人", ExportService.formatHistoricalPlanCount(40, false));
+        assertEquals("-", ExportService.formatHistoricalPlanCount(null, false));
+        assertEquals("新增", ExportService.formatHistoricalPlanCount(null, true));
+    }
+
+    @Test
+    void volunteerSheetExportsMajorCodeAndThreeHistoricalPlanCounts() throws Exception {
+        VolunteerForm form = new VolunteerForm();
+        form.setName("测试志愿表");
+        form.setYear(2026);
+        VolunteerItem item = new VolunteerItem();
+        item.setPlanId(8058871231L);
+        item.setSchoolCode("E666");
+        item.setSchoolName("测试职业学院");
+        item.setMajorName("智能机器人技术");
+        item.setPlanCount(80);
+
+        ExportService service = new ExportService(null, null, null, null, null,
+                null, null, null, null, null);
+        try (XSSFWorkbook workbook = new XSSFWorkbook()) {
+            ReflectionTestUtils.invokeMethod(service, "createVolunteerSheet", workbook, form,
+                    List.of(item), Map.of(), Map.of(), Map.of(), Map.of(item.getPlanId(),
+                            new SpecializedModelRecommendationService.HistoricalRanks(
+                                    "34", 520308, 515388, 502374, 60, 55, 31)));
+
+            var sheet = workbook.getSheet("志愿表");
+            var header = sheet.getRow(3);
+            var data = sheet.getRow(4);
+            assertEquals("专业代码", header.getCell(4).getStringCellValue());
+            assertEquals("2025年录取人数", header.getCell(9).getStringCellValue());
+            assertEquals("2024年录取人数", header.getCell(10).getStringCellValue());
+            assertEquals("2023年录取人数", header.getCell(11).getStringCellValue());
+            assertEquals("34", data.getCell(4).getStringCellValue());
+            assertEquals("60人", data.getCell(9).getStringCellValue());
+            assertEquals("55人", data.getCell(10).getStringCellValue());
+            assertEquals("31人", data.getCell(11).getStringCellValue());
+            assertEquals("2023年最低位次", header.getCell(16).getStringCellValue());
+        }
     }
 
     @Test

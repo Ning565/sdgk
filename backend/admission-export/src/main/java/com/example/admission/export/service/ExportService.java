@@ -285,7 +285,10 @@ public class ExportService {
 
         int currentYear = form.getYear() != null ? form.getYear() : LocalDateTime.now().getYear();
         String[] headers = {"序号", "层级（冲稳保）", "院校代号", "院校", "专业代码",
-                "专业", "办学性质", "选科要求", "计划人数", "学费", "专业类",
+                "专业", "办学性质", "选科要求", "计划人数",
+                (currentYear - 1) + "年录取人数", (currentYear - 2) + "年录取人数",
+                (currentYear - 3) + "年录取人数",
+                "学费", "专业类",
                 (currentYear - 1) + "年最低位次", (currentYear - 2) + "年最低位次",
                 (currentYear - 3) + "年最低位次"};
 
@@ -322,19 +325,24 @@ public class ExportService {
             createCell(row, col++, text(item.getLabel()), rowStyle);
             createCell(row, col++, text(item.getSchoolCode(), plan != null ? plan.getSchoolCode() : null), rowStyle);
             createCell(row, col++, text(item.getSchoolName(), plan != null ? plan.getSchoolName() : null), rowStyle);
-            createCell(row, col++, text(item.getMajorCode(), plan != null ? plan.getMajorCode() : null), rowStyle);
+            SpecializedModelRecommendationService.HistoricalRanks modelHistory = modelRankMap.get(item.getPlanId());
+            createCell(row, col++, resolveMajorCode(item, plan, modelHistory), rowStyle);
             createCell(row, col++, text(item.getMajorName(), plan != null ? plan.getMajorName() : null), rowStyle);
             createCell(row, col++, resolveSchoolType(item, schoolMap), rowStyle);
             createCell(row, col++, text(item.getSubjectRequirementText(),
                     plan != null ? plan.getSubjectRequirementText() : null, "不限"), rowStyle);
             createCell(row, col++, formatPlanCount(item.getPlanCount(),
                     plan != null ? plan.getPlanCount() : null), rowStyle);
+            boolean newPlan = "NEW".equalsIgnoreCase(text(item.getPlanStatus(),
+                    plan != null ? plan.getPlanStatus() : null));
+            HistoricalPlanCountValues historicalPlanCounts = resolveHistoricalPlanCounts(modelHistory);
+            createCell(row, col++, formatHistoricalPlanCount(historicalPlanCounts.lastYear(), newPlan), rowStyle);
+            createCell(row, col++, formatHistoricalPlanCount(historicalPlanCounts.twoYearsAgo(), newPlan), rowStyle);
+            createCell(row, col++, formatHistoricalPlanCount(historicalPlanCounts.threeYearsAgo(), newPlan), rowStyle);
             createCell(row, col++, formatTuition(item.getTuition(),
                     plan != null ? plan.getTuition() : null), rowStyle);
             createCell(row, col++, getMajorSubcategory(plan, standardMajorMap), rowStyle);
 
-            boolean newPlan = "NEW".equalsIgnoreCase(text(item.getPlanStatus(),
-                    plan != null ? plan.getPlanStatus() : null));
             HistoricalRankValues ranks = resolveHistoricalRanks(item, plan, modelRankMap);
             createCell(row, col++, formatHistoricalRank(ranks.lastYear(), newPlan), rowStyle);
             createCell(row, col++, formatHistoricalRank(ranks.twoYearsAgo(), newPlan), rowStyle);
@@ -342,7 +350,8 @@ public class ExportService {
         }
 
         // 设置列宽
-        int[] widths = {8, 14, 14, 25, 14, 30, 12, 20, 12, 14, 20, 18, 18, 18};
+        int[] widths = {8, 14, 14, 25, 14, 30, 12, 20, 12,
+                16, 16, 16, 14, 20, 18, 18, 18};
         for (int i = 0; i < widths.length; i++) {
             sheet.setColumnWidth(i, widths[i] * 256);
         }
@@ -360,6 +369,37 @@ public class ExportService {
             return "新增";
         }
         return rank != null ? String.valueOf(rank) : "-";
+    }
+
+    static String formatHistoricalPlanCount(Integer count, boolean newPlan) {
+        if (newPlan) {
+            return "新增";
+        }
+        return count != null ? count + "人" : "-";
+    }
+
+    private String resolveMajorCode(
+            VolunteerItem item,
+            EnrollmentPlan plan,
+            SpecializedModelRecommendationService.HistoricalRanks modelHistory) {
+        return text(item.getMajorCode(),
+                plan != null ? plan.getMajorCode() : null,
+                modelHistory != null ? modelHistory.majorCode() : null);
+    }
+
+    private HistoricalPlanCountValues resolveHistoricalPlanCounts(
+            SpecializedModelRecommendationService.HistoricalRanks modelHistory) {
+        return new HistoricalPlanCountValues(
+                modelHistory != null ? modelHistory.lastYearPlanCount() : null,
+                modelHistory != null ? modelHistory.twoYearPlanCount() : null,
+                modelHistory != null ? modelHistory.threeYearPlanCount() : null);
+    }
+
+    private record HistoricalPlanCountValues(
+            Integer lastYear,
+            Integer twoYearsAgo,
+            Integer threeYearsAgo
+    ) {
     }
 
     private HistoricalRankValues resolveHistoricalRanks(
@@ -417,8 +457,11 @@ public class ExportService {
             boolean newPlan = "NEW".equalsIgnoreCase(text(item.getPlanStatus(),
                     plan != null ? plan.getPlanStatus() : null));
             HistoricalRankValues ranks = resolveHistoricalRanks(item, plan, modelRankMap);
+            SpecializedModelRecommendationService.HistoricalRanks modelHistory = modelRankMap.get(item.getPlanId());
+            HistoricalPlanCountValues historicalPlanCounts = resolveHistoricalPlanCounts(modelHistory);
+            String majorCode = resolveMajorCode(item, plan, modelHistory);
             String searchText = String.join(" ", schoolName, majorName, text(item.getSchoolCode()),
-                    text(item.getMajorCode()), schoolType);
+                    majorCode, schoolType);
 
             rows.append("<tr data-label=\"").append(htmlEscape(label)).append("\" data-type=\"")
                     .append(htmlEscape(schoolType)).append("\" data-search=\"")
@@ -429,13 +472,16 @@ public class ExportService {
                     .append("<td><div class=\"school\">").append(htmlEscape(schoolName)).append("</div><small>")
                     .append(htmlEscape(text(item.getSchoolCode(), plan != null ? plan.getSchoolCode() : null))).append("</small></td>")
                     .append("<td><div class=\"major\">").append(htmlEscape(majorName)).append("</div><small>")
-                    .append(htmlEscape(text(item.getMajorCode(), plan != null ? plan.getMajorCode() : null))).append("</small></td>")
+                    .append(htmlEscape(majorCode)).append("</small></td>")
                     .append("<td><span class=\"nature ").append(natureClass(schoolType)).append("\">")
                     .append(htmlEscape(schoolType)).append("</span></td>")
                     .append("<td>").append(htmlEscape(text(item.getSubjectRequirementText(),
                             plan != null ? plan.getSubjectRequirementText() : null, "不限"))).append("</td>")
                     .append("<td>").append(htmlEscape(formatPlanCount(item.getPlanCount(),
                             plan != null ? plan.getPlanCount() : null))).append("</td>")
+                    .append("<td>").append(htmlEscape(formatHistoricalPlanCount(historicalPlanCounts.lastYear(), newPlan))).append("</td>")
+                    .append("<td>").append(htmlEscape(formatHistoricalPlanCount(historicalPlanCounts.twoYearsAgo(), newPlan))).append("</td>")
+                    .append("<td>").append(htmlEscape(formatHistoricalPlanCount(historicalPlanCounts.threeYearsAgo(), newPlan))).append("</td>")
                     .append("<td>").append(htmlEscape(formatTuition(item.getTuition(),
                             plan != null ? plan.getTuition() : null))).append("</td>")
                     .append("<td>").append(htmlEscape(getMajorSubcategory(plan, standardMajorMap))).append("</td>")
@@ -453,13 +499,13 @@ public class ExportService {
                 .page{max-width:1540px;margin:0 auto;padding:34px 28px 54px}.hero{position:relative;overflow:hidden;background:linear-gradient(125deg,#102a43,#174f70 58%,#0f8b8d);color:white;border-radius:24px;padding:34px 38px;box-shadow:0 18px 45px #183b5625}
                 .hero:after{content:"";position:absolute;width:340px;height:340px;border:70px solid #ffffff10;border-radius:50%;right:-110px;top:-170px}.eyebrow{letter-spacing:.18em;opacity:.72;font-size:12px}.hero h1{font-size:30px;line-height:1.25;margin:9px 0 12px}.meta{display:flex;gap:22px;flex-wrap:wrap;color:#d9edf4}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0}.stat{background:#ffffffd9;backdrop-filter:blur(10px);border:1px solid #fff;border-radius:16px;padding:18px 20px;box-shadow:0 8px 24px #183b5610}.stat b{display:block;font-size:25px;color:var(--navy)}.stat span{color:var(--muted)}
                 .toolbar{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:minmax(260px,1fr) 180px 180px auto;gap:12px;background:#f8fafcee;padding:15px 0;backdrop-filter:blur(12px)}input,select{width:100%;height:44px;border:1px solid var(--line);border-radius:12px;background:white;padding:0 14px;color:var(--ink);outline:none}input:focus,select:focus{border-color:var(--teal);box-shadow:0 0 0 3px #0f8b8d18}.result{align-self:center;text-align:right;color:var(--muted);white-space:nowrap}
-                .table-card{background:var(--paper);border:1px solid #d9e2ecaa;border-radius:18px;overflow:auto;box-shadow:0 12px 35px #183b5610}table{border-collapse:separate;border-spacing:0;width:100%;min-width:1280px}thead th{position:sticky;top:0;z-index:2;background:var(--navy);color:white;text-align:left;padding:13px 12px;font-size:13px;white-space:nowrap}tbody td{padding:13px 12px;border-bottom:1px solid #edf2f7;vertical-align:middle}tbody tr:nth-child(even){background:#f8fafc}tbody tr:hover{background:#edf8f7}.seq,.rank{text-align:center;font-variant-numeric:tabular-nums}.school,.major{font-weight:650;color:#183b56}small{color:var(--muted)}.tag,.nature{display:inline-flex;padding:3px 10px;border-radius:999px;font-weight:650;white-space:nowrap}.reach{background:#fff0f0;color:#c53030}.match{background:#fff8df;color:#9c6500}.safe{background:#e8f7f1;color:#13795b}.neutral{background:#edf2f7;color:#526779}.public{background:#e7f2fb;color:#1f5f8b}.private{background:#f5eefa;color:#7b4a99}.empty{padding:55px;text-align:center;color:var(--muted);display:none}.foot{text-align:center;color:var(--muted);margin-top:22px;font-size:12px}
+                .table-card{background:var(--paper);border:1px solid #d9e2ecaa;border-radius:18px;overflow:auto;box-shadow:0 12px 35px #183b5610}table{border-collapse:separate;border-spacing:0;width:100%;min-width:1580px}thead th{position:sticky;top:0;z-index:2;background:var(--navy);color:white;text-align:left;padding:13px 12px;font-size:13px;white-space:nowrap}tbody td{padding:13px 12px;border-bottom:1px solid #edf2f7;vertical-align:middle}tbody tr:nth-child(even){background:#f8fafc}tbody tr:hover{background:#edf8f7}.seq,.rank{text-align:center;font-variant-numeric:tabular-nums}.school,.major{font-weight:650;color:#183b56}small{color:var(--muted)}.tag,.nature{display:inline-flex;padding:3px 10px;border-radius:999px;font-weight:650;white-space:nowrap}.reach{background:#fff0f0;color:#c53030}.match{background:#fff8df;color:#9c6500}.safe{background:#e8f7f1;color:#13795b}.neutral{background:#edf2f7;color:#526779}.public{background:#e7f2fb;color:#1f5f8b}.private{background:#f5eefa;color:#7b4a99}.empty{padding:55px;text-align:center;color:var(--muted);display:none}.foot{text-align:center;color:var(--muted);margin-top:22px;font-size:12px}
                 @media(max-width:800px){.page{padding:18px 12px}.hero{padding:26px 22px;border-radius:18px}.hero h1{font-size:24px}.stats{grid-template-columns:repeat(2,1fr)}.toolbar{grid-template-columns:1fr 1fr}.toolbar input{grid-column:1/-1}.result{text-align:left}.stat{padding:14px}}
                 @media print{body{background:white}.page{max-width:none;padding:0}.hero{box-shadow:none}.toolbar{display:none}.table-card{box-shadow:none;border:0}thead th{position:static}.foot{margin-top:10px}}
                 </style></head><body><main class="page"><section class="hero"><div class="eyebrow">GAOKAO VOLUNTEER PORTFOLIO</div><h1>__TITLE__</h1><div class="meta"><span>__YEAR__ 年高考</span><span>考生分数：__SCORE__</span><span>省排名：__RANK__</span><span>导出时间：__TIME__</span></div></section>
                 <section class="stats"><div class="stat"><b>__TOTAL__</b><span>志愿总数</span></div><div class="stat"><b>__REACH__</b><span>冲刺志愿</span></div><div class="stat"><b>__MATCH__</b><span>稳妥志愿</span></div><div class="stat"><b>__SAFE__</b><span>保底志愿</span></div></section>
                 <section class="toolbar"><input id="search" type="search" placeholder="搜索院校、专业、代码…"><select id="type"><option value="">全部办学性质</option><option>公办</option><option>民办</option><option>独立学院</option><option>中外合作办学</option></select><select id="label"><option value="">全部冲稳保</option><option>冲</option><option>稳</option><option>保</option><option>未分类</option></select><div class="result">显示 <b id="visible">__TOTAL__</b> / __TOTAL__ 条</div></section>
-                <section class="table-card"><table><thead><tr><th>序号</th><th>冲稳保</th><th>院校</th><th>专业</th><th>办学性质</th><th>选科要求</th><th>计划</th><th>学费/年</th><th>专业类</th><th>__Y1__ 位次</th><th>__Y2__ 位次</th><th>__Y3__ 位次</th></tr></thead><tbody id="rows">__ROWS__</tbody></table><div id="empty" class="empty">没有符合当前筛选条件的志愿</div></section>
+                <section class="table-card"><table><thead><tr><th>序号</th><th>冲稳保</th><th>院校</th><th>专业</th><th>办学性质</th><th>选科要求</th><th>计划</th><th>__Y1__ 录取人数</th><th>__Y2__ 录取人数</th><th>__Y3__ 录取人数</th><th>学费/年</th><th>专业类</th><th>__Y1__ 位次</th><th>__Y2__ 位次</th><th>__Y3__ 位次</th></tr></thead><tbody id="rows">__ROWS__</tbody></table><div id="empty" class="empty">没有符合当前筛选条件的志愿</div></section>
                 <div class="foot">本志愿方案仅供参考，不构成录取承诺。请以山东省教育招生考试院官方信息为准。</div></main>
                 <script>const q=document.querySelector('#search'),t=document.querySelector('#type'),l=document.querySelector('#label'),rs=[...document.querySelectorAll('#rows tr')],v=document.querySelector('#visible'),e=document.querySelector('#empty');function filter(){const s=q.value.trim().toLowerCase();let n=0;rs.forEach(r=>{const ok=(!s||r.dataset.search.includes(s))&&(!t.value||r.dataset.type===t.value)&&(!l.value||r.dataset.label===l.value);r.hidden=!ok;if(ok)n++});v.textContent=n;e.style.display=n?'none':'block'}[q,t,l].forEach(x=>x.addEventListener('input',filter));</script></body></html>
                 """;

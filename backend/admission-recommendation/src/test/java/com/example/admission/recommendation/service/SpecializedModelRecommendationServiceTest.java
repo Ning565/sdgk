@@ -24,9 +24,13 @@ class SpecializedModelRecommendationServiceTest {
         var ranks = service.findHistoricalRanks(Set.of(8058871231L)).get(8058871231L);
 
         assertNotNull(ranks);
+        assertEquals("34", ranks.majorCode());
         assertEquals(520308, ranks.lastYearMinRank());
         assertEquals(515388, ranks.twoYearMinRank());
         assertEquals(502374, ranks.threeYearMinRank());
+        assertEquals(60, ranks.lastYearPlanCount());
+        assertEquals(55, ranks.twoYearPlanCount());
+        assertEquals(31, ranks.threeYearPlanCount());
     }
 
     @Test

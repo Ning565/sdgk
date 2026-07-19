@@ -74,15 +74,24 @@ public class SpecializedModelRecommendationService {
                 .collect(Collectors.toMap(
                         ModelPlan::planId,
                         plan -> new HistoricalRanks(
-                                plan.lastYearMinRank, plan.twoYearMinRank, plan.threeYearMinRank),
+                                plan.majorCode,
+                                plan.lastYearMinRank, plan.twoYearMinRank, plan.threeYearMinRank,
+                                plan.lastYearPlanCount, plan.twoYearPlanCount, plan.threeYearPlanCount),
                         (a, b) -> a));
     }
 
     public record HistoricalRanks(
+            String majorCode,
             Integer lastYearMinRank,
             Integer twoYearMinRank,
-            Integer threeYearMinRank
+            Integer threeYearMinRank,
+            Integer lastYearPlanCount,
+            Integer twoYearPlanCount,
+            Integer threeYearPlanCount
     ) {
+        public HistoricalRanks(Integer lastYearMinRank, Integer twoYearMinRank, Integer threeYearMinRank) {
+            this(null, lastYearMinRank, twoYearMinRank, threeYearMinRank, null, null, null);
+        }
     }
 
     public RecommendationResponse search(RecommendationRequest req) {
@@ -444,6 +453,8 @@ public class SpecializedModelRecommendationService {
             Integer twoYearMinRank,
             Integer threeYearMinRank,
             Integer lastYearPlanCount,
+            Integer twoYearPlanCount,
+            Integer threeYearPlanCount,
             int predictedRankP10,
             int predictedRankP50,
             int predictedRankP90,
@@ -476,6 +487,8 @@ public class SpecializedModelRecommendationService {
                     nullableInt(values, index, "two_year_min_rank"),
                     nullableInt(values, index, "three_year_min_rank"),
                     nullableInt(values, index, "last_year_plan_count"),
+                    nullableInt(values, index, "two_year_plan_count"),
+                    nullableInt(values, index, "three_year_plan_count"),
                     intValue(values, index, "predicted_rank_p10", 0),
                     intValue(values, index, "predicted_rank_p50", 0),
                     intValue(values, index, "predicted_rank_p90", 0),

@@ -314,6 +314,8 @@ def main() -> None:
                 "two_year_min_rank": int_num(row.get("最低位次.1")) or "",
                 "three_year_min_rank": int_num(row.get("最低位次.2")) or "",
                 "last_year_plan_count": int_num(row.get("录取人数")) or "",
+                "two_year_plan_count": int_num(row.get("录取人数.1")) or "",
+                "three_year_plan_count": int_num(row.get("录取人数.2")) or "",
                 "predicted_rank_p10": p10,
                 "predicted_rank_p50": p50,
                 "predicted_rank_p90": p90,
