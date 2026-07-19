@@ -198,7 +198,7 @@ public class ExportService {
             createCandidateSheet(workbook, form, profile);
 
             // Sheet 2: 志愿表
-            createVolunteerSheet(workbook, items, planMap, standardMajorMap);
+            createVolunteerSheet(workbook, form.getYear(), items, planMap, standardMajorMap);
 
             // Sheet 3: 检查结果
             createCheckSheet(workbook, form.getId(), planMap);
@@ -246,15 +246,18 @@ public class ExportService {
         sheet.setColumnWidth(1, 60 * 256);
     }
 
-    private void createVolunteerSheet(XSSFWorkbook workbook, List<VolunteerItem> items,
+    private void createVolunteerSheet(XSSFWorkbook workbook, Integer formYear, List<VolunteerItem> items,
                                        Map<Long, EnrollmentPlan> planMap,
                                        Map<String, StandardMajor> standardMajorMap) {
         Sheet sheet = workbook.createSheet("志愿表");
         CellStyle headerStyle = createHeaderStyle(workbook);
         CellStyle dataStyle = createDataStyle(workbook);
 
+        int currentYear = formYear != null ? formYear : LocalDateTime.now().getYear();
         String[] headers = {"序号", "层级（冲稳保）", "院校代号", "院校", "专业代码",
-                "专业", "选科要求", "计划人数", "学费", "专业类"};
+                "专业", "选科要求", "计划人数", "学费", "专业类",
+                (currentYear - 1) + "年最低位次", (currentYear - 2) + "年最低位次",
+                (currentYear - 3) + "年最低位次"};
 
         int rowIdx = 0;
         Row headerRow = sheet.createRow(rowIdx++);
@@ -279,14 +282,32 @@ public class ExportService {
                     plan != null ? plan.getPlanCount() : null), dataStyle);
             createCell(row, col++, formatTuition(item.getTuition(),
                     plan != null ? plan.getTuition() : null), dataStyle);
-            createCell(row, col, getMajorSubcategory(plan, standardMajorMap), dataStyle);
+            createCell(row, col++, getMajorSubcategory(plan, standardMajorMap), dataStyle);
+
+            boolean newPlan = "NEW".equalsIgnoreCase(text(item.getPlanStatus(),
+                    plan != null ? plan.getPlanStatus() : null));
+            Integer lastYearRank = item.getLastYearMinRank() != null
+                    ? item.getLastYearMinRank()
+                    : plan != null ? plan.getLastYearMinRank() : null;
+            createCell(row, col++, formatHistoricalRank(lastYearRank, newPlan), dataStyle);
+            createCell(row, col++, formatHistoricalRank(
+                    plan != null ? plan.getTwoYearMinRank() : null, newPlan), dataStyle);
+            createCell(row, col, formatHistoricalRank(
+                    plan != null ? plan.getThreeYearMinRank() : null, newPlan), dataStyle);
         }
 
         // 设置列宽
-        int[] widths = {10, 16, 16, 26, 16, 30, 20, 14, 14, 22};
+        int[] widths = {10, 16, 16, 26, 16, 30, 20, 14, 14, 22, 18, 18, 18};
         for (int i = 0; i < widths.length; i++) {
             sheet.setColumnWidth(i, widths[i] * 256);
         }
+    }
+
+    static String formatHistoricalRank(Integer rank, boolean newPlan) {
+        if (newPlan) {
+            return "新增";
+        }
+        return rank != null ? String.valueOf(rank) : "-";
     }
 
     private void createCheckSheet(XSSFWorkbook workbook, Long formId, Map<Long, EnrollmentPlan> planMap) {

@@ -68,6 +68,15 @@ public class EnrollmentPlan {
     @TableField("subject_rule_status")
     private String subjectRuleStatus;
 
+    @TableField("last_year_min_rank")
+    private Integer lastYearMinRank;
+
+    @TableField("two_year_min_rank")
+    private Integer twoYearMinRank;
+
+    @TableField("three_year_min_rank")
+    private Integer threeYearMinRank;
+
     @TableField("remark")
     private String remark;
 
