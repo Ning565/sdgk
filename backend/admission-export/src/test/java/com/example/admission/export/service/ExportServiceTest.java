@@ -4,6 +4,7 @@ import com.example.admission.volunteer.entity.VolunteerForm;
 import com.example.admission.volunteer.entity.VolunteerItem;
 import com.example.admission.recommendation.service.SpecializedModelRecommendationService;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.ss.usermodel.FillPatternType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -59,7 +60,7 @@ class ExportServiceTest {
                 null, null, null, null, null);
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             ReflectionTestUtils.invokeMethod(service, "createVolunteerSheet", workbook, form,
-                    List.of(item), Map.of(), Map.of(), Map.of(), Map.of(item.getPlanId(),
+                    List.of(item, item), Map.of(), Map.of(), Map.of(), Map.of(item.getPlanId(),
                             new SpecializedModelRecommendationService.HistoricalRanks(
                                     "34", 520308, 515388, 502374, 60, 55, 31)));
 
@@ -75,6 +76,8 @@ class ExportServiceTest {
             assertEquals("55人", data.getCell(10).getStringCellValue());
             assertEquals("31人", data.getCell(11).getStringCellValue());
             assertEquals("2023年最低位次", header.getCell(16).getStringCellValue());
+            assertEquals(FillPatternType.NO_FILL, sheet.getRow(4).getCell(0).getCellStyle().getFillPattern());
+            assertEquals(FillPatternType.NO_FILL, sheet.getRow(5).getCell(0).getCellStyle().getFillPattern());
         }
     }
 

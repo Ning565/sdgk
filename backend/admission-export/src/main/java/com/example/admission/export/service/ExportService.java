@@ -281,7 +281,6 @@ public class ExportService {
         Sheet sheet = workbook.createSheet("志愿表");
         CellStyle headerStyle = createHeaderStyle(workbook);
         CellStyle dataStyle = createDataStyle(workbook);
-        CellStyle alternateDataStyle = createAlternateDataStyle(workbook);
 
         int currentYear = form.getYear() != null ? form.getYear() : LocalDateTime.now().getYear();
         String[] headers = {"序号", "层级（冲稳保）", "院校代号", "院校", "专业代码",
@@ -318,7 +317,7 @@ public class ExportService {
             Row row = sheet.createRow(rowIdx++);
             row.setHeightInPoints(25);
             EnrollmentPlan plan = planMap.get(item.getPlanId());
-            CellStyle rowStyle = itemIndex % 2 == 0 ? dataStyle : alternateDataStyle;
+            CellStyle rowStyle = dataStyle;
             int col = 0;
 
             createCell(row, col++, String.valueOf(itemIndex + 1), rowStyle);
@@ -499,7 +498,7 @@ public class ExportService {
                 .page{max-width:1540px;margin:0 auto;padding:34px 28px 54px}.hero{position:relative;overflow:hidden;background:linear-gradient(125deg,#102a43,#174f70 58%,#0f8b8d);color:white;border-radius:24px;padding:34px 38px;box-shadow:0 18px 45px #183b5625}
                 .hero:after{content:"";position:absolute;width:340px;height:340px;border:70px solid #ffffff10;border-radius:50%;right:-110px;top:-170px}.eyebrow{letter-spacing:.18em;opacity:.72;font-size:12px}.hero h1{font-size:30px;line-height:1.25;margin:9px 0 12px}.meta{display:flex;gap:22px;flex-wrap:wrap;color:#d9edf4}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0}.stat{background:#ffffffd9;backdrop-filter:blur(10px);border:1px solid #fff;border-radius:16px;padding:18px 20px;box-shadow:0 8px 24px #183b5610}.stat b{display:block;font-size:25px;color:var(--navy)}.stat span{color:var(--muted)}
                 .toolbar{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:minmax(260px,1fr) 180px 180px auto;gap:12px;background:#f8fafcee;padding:15px 0;backdrop-filter:blur(12px)}input,select{width:100%;height:44px;border:1px solid var(--line);border-radius:12px;background:white;padding:0 14px;color:var(--ink);outline:none}input:focus,select:focus{border-color:var(--teal);box-shadow:0 0 0 3px #0f8b8d18}.result{align-self:center;text-align:right;color:var(--muted);white-space:nowrap}
-                .table-card{background:var(--paper);border:1px solid #d9e2ecaa;border-radius:18px;overflow:auto;box-shadow:0 12px 35px #183b5610}table{border-collapse:separate;border-spacing:0;width:100%;min-width:1580px}thead th{position:sticky;top:0;z-index:2;background:var(--navy);color:white;text-align:left;padding:13px 12px;font-size:13px;white-space:nowrap}tbody td{padding:13px 12px;border-bottom:1px solid #edf2f7;vertical-align:middle}tbody tr:nth-child(even){background:#f8fafc}tbody tr:hover{background:#edf8f7}.seq,.rank{text-align:center;font-variant-numeric:tabular-nums}.school,.major{font-weight:650;color:#183b56}small{color:var(--muted)}.tag,.nature{display:inline-flex;padding:3px 10px;border-radius:999px;font-weight:650;white-space:nowrap}.reach{background:#fff0f0;color:#c53030}.match{background:#fff8df;color:#9c6500}.safe{background:#e8f7f1;color:#13795b}.neutral{background:#edf2f7;color:#526779}.public{background:#e7f2fb;color:#1f5f8b}.private{background:#f5eefa;color:#7b4a99}.empty{padding:55px;text-align:center;color:var(--muted);display:none}.foot{text-align:center;color:var(--muted);margin-top:22px;font-size:12px}
+                .table-card{background:var(--paper);border:1px solid #d9e2ecaa;border-radius:18px;overflow:auto;box-shadow:0 12px 35px #183b5610}table{border-collapse:separate;border-spacing:0;width:100%;min-width:1580px}thead th{position:sticky;top:0;z-index:2;background:var(--navy);color:white;text-align:left;padding:13px 12px;font-size:13px;white-space:nowrap}tbody td{padding:13px 12px;border-bottom:1px solid #edf2f7;vertical-align:middle;background:#fff}tbody tr:hover td{background:#edf8f7}.seq,.rank{text-align:center;font-variant-numeric:tabular-nums}.school,.major{font-weight:650;color:#183b56}small{color:var(--muted)}.tag,.nature{display:inline-flex;padding:3px 10px;border-radius:999px;font-weight:650;white-space:nowrap}.reach{background:#fff0f0;color:#c53030}.match{background:#fff8df;color:#9c6500}.safe{background:#e8f7f1;color:#13795b}.neutral{background:#edf2f7;color:#526779}.public{background:#e7f2fb;color:#1f5f8b}.private{background:#f5eefa;color:#7b4a99}.empty{padding:55px;text-align:center;color:var(--muted);display:none}.foot{text-align:center;color:var(--muted);margin-top:22px;font-size:12px}
                 @media(max-width:800px){.page{padding:18px 12px}.hero{padding:26px 22px;border-radius:18px}.hero h1{font-size:24px}.stats{grid-template-columns:repeat(2,1fr)}.toolbar{grid-template-columns:1fr 1fr}.toolbar input{grid-column:1/-1}.result{text-align:left}.stat{padding:14px}}
                 @media print{body{background:white}.page{max-width:none;padding:0}.hero{box-shadow:none}.toolbar{display:none}.table-card{box-shadow:none;border:0}thead th{position:static}.foot{margin-top:10px}}
                 </style></head><body><main class="page"><section class="hero"><div class="eyebrow">GAOKAO VOLUNTEER PORTFOLIO</div><h1>__TITLE__</h1><div class="meta"><span>__YEAR__ 年高考</span><span>考生分数：__SCORE__</span><span>省排名：__RANK__</span><span>导出时间：__TIME__</span></div></section>
@@ -730,14 +729,6 @@ public class ExportService {
         style.setBottomBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
         style.setVerticalAlignment(VerticalAlignment.CENTER);
         style.setWrapText(true);
-        return style;
-    }
-
-    private CellStyle createAlternateDataStyle(XSSFWorkbook workbook) {
-        CellStyle style = workbook.createCellStyle();
-        style.cloneStyleFrom(createDataStyle(workbook));
-        style.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
-        style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
         return style;
     }
 
