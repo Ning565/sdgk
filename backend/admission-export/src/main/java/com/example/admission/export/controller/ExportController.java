@@ -57,6 +57,25 @@ public class ExportController {
                 .body(resource);
     }
 
+    /** 下载可交互 HTML 志愿表 */
+    @GetMapping("/exports/{exportRecordId}/html")
+    public ResponseEntity<Resource> downloadHtml(@PathVariable("exportRecordId") Long exportRecordId) {
+        ExportRecord record = exportService.getExportRecord(exportRecordId);
+        File file = exportService.getHtmlFile(record);
+        if (!file.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Resource resource = new FileSystemResource(file);
+        String encodedFileName = URLEncoder.encode(file.getName(), StandardCharsets.UTF_8)
+                .replace("+", "%20");
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/html;charset=UTF-8"))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename*=UTF-8''" + encodedFileName)
+                .body(resource);
+    }
+
     /** 导出记录列表 */
     @GetMapping("/volunteer-forms/{formId}/exports")
     public ApiResponse<List<ExportResponse>> listExports(@PathVariable("formId") Long formId) {

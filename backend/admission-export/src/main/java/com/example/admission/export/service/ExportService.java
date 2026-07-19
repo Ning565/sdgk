@@ -6,6 +6,7 @@ import com.example.admission.auth.service.AuthService;
 import com.example.admission.candidate.entity.CandidateProfile;
 import com.example.admission.candidate.service.CandidateService;
 import com.example.admission.catalog.entity.EnrollmentPlan;
+import com.example.admission.catalog.entity.School;
 import com.example.admission.catalog.entity.StandardMajor;
 import com.example.admission.catalog.mapper.StandardMajorMapper;
 import com.example.admission.catalog.service.EnrollmentPlanService;
@@ -27,6 +28,7 @@ import com.example.admission.volunteercheck.mapper.VolunteerCheckRunMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -36,6 +38,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -43,6 +46,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Excel 导出服务.
@@ -109,6 +113,12 @@ public class ExportService {
         List<Long> planIds = items.stream().map(VolunteerItem::getPlanId).filter(Objects::nonNull).distinct().toList();
         Map<Long, EnrollmentPlan> planMap = enrollmentPlanService.listPlansByIds(planIds).stream()
                 .collect(Collectors.toMap(EnrollmentPlan::getId, p -> p, (a, b) -> a));
+        List<Long> schoolIds = Stream.concat(
+                        items.stream().map(VolunteerItem::getSchoolId),
+                        planMap.values().stream().map(EnrollmentPlan::getSchoolId))
+                .filter(Objects::nonNull).distinct().toList();
+        Map<Long, School> schoolMap = enrollmentPlanService.listSchoolsByIds(schoolIds).stream()
+                .collect(Collectors.toMap(School::getId, s -> s, (a, b) -> a));
         Map<String, StandardMajor> standardMajorMap = loadStandardMajorMap(planMap.values());
 
         // 5. 生成 Excel
@@ -118,7 +128,8 @@ public class ExportService {
         try {
             Files.createDirectories(dirPath);
             filePath = dirPath.resolve(fileName).toString();
-            generateExcel(filePath, form, items, profile, planMap, standardMajorMap);
+            generateExcel(filePath, form, items, profile, planMap, schoolMap, standardMajorMap);
+            generateHtml(toHtmlPath(filePath), form, items, profile, planMap, schoolMap, standardMajorMap);
         } catch (IOException e) {
             log.error("Failed to generate Excel: formId={}", formId, e);
             throw new BusinessException(ErrorCode.EXPORT_FAILED, "生成Excel文件失败: " + e.getMessage());
@@ -142,6 +153,8 @@ public class ExportService {
         return ExportResponse.builder()
                 .fileUrl("/api/v1/exports/" + record.getId())
                 .fileName(fileName)
+                .htmlFileUrl("/api/v1/exports/" + record.getId() + "/html")
+                .htmlFileName(toHtmlFileName(fileName))
                 .exportRecordId(record.getId())
                 .exportedAt(record.getCreatedAt())
                 .build();
@@ -167,6 +180,8 @@ public class ExportService {
                 .map(r -> ExportResponse.builder()
                         .fileUrl("/api/v1/exports/" + r.getId())
                         .fileName(r.getFileName())
+                        .htmlFileUrl("/api/v1/exports/" + r.getId() + "/html")
+                        .htmlFileName(toHtmlFileName(r.getFileName()))
                         .exportRecordId(r.getId())
                         .exportedAt(r.getCreatedAt())
                         .build())
@@ -188,17 +203,22 @@ public class ExportService {
         return record;
     }
 
+    public File getHtmlFile(ExportRecord record) {
+        return new File(toHtmlPath(record.getFilePath()));
+    }
+
     // ==================== Excel 生成 ====================
 
     private void generateExcel(String filePath, VolunteerForm form, List<VolunteerItem> items,
                                 CandidateProfile profile, Map<Long, EnrollmentPlan> planMap,
+                                Map<Long, School> schoolMap,
                                 Map<String, StandardMajor> standardMajorMap) throws IOException {
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             // Sheet 1: 考生信息
             createCandidateSheet(workbook, form, profile);
 
             // Sheet 2: 志愿表
-            createVolunteerSheet(workbook, form.getYear(), items, planMap, standardMajorMap);
+            createVolunteerSheet(workbook, form, items, planMap, schoolMap, standardMajorMap);
 
             // Sheet 3: 检查结果
             createCheckSheet(workbook, form.getId(), planMap);
@@ -246,61 +266,89 @@ public class ExportService {
         sheet.setColumnWidth(1, 60 * 256);
     }
 
-    private void createVolunteerSheet(XSSFWorkbook workbook, Integer formYear, List<VolunteerItem> items,
+    private void createVolunteerSheet(XSSFWorkbook workbook, VolunteerForm form, List<VolunteerItem> items,
                                        Map<Long, EnrollmentPlan> planMap,
+                                       Map<Long, School> schoolMap,
                                        Map<String, StandardMajor> standardMajorMap) {
         Sheet sheet = workbook.createSheet("志愿表");
         CellStyle headerStyle = createHeaderStyle(workbook);
         CellStyle dataStyle = createDataStyle(workbook);
+        CellStyle alternateDataStyle = createAlternateDataStyle(workbook);
 
-        int currentYear = formYear != null ? formYear : LocalDateTime.now().getYear();
+        int currentYear = form.getYear() != null ? form.getYear() : LocalDateTime.now().getYear();
         String[] headers = {"序号", "层级（冲稳保）", "院校代号", "院校", "专业代码",
-                "专业", "选科要求", "计划人数", "学费", "专业类",
+                "专业", "办学性质", "选科要求", "计划人数", "学费", "专业类",
                 (currentYear - 1) + "年最低位次", (currentYear - 2) + "年最低位次",
                 (currentYear - 3) + "年最低位次"};
 
         int rowIdx = 0;
+        CellStyle titleStyle = createTitleStyle(workbook);
+        CellStyle subtitleStyle = createSubtitleStyle(workbook);
+        Row titleRow = sheet.createRow(rowIdx++);
+        titleRow.setHeightInPoints(34);
+        createCell(titleRow, 0, text(form.getName(), "高考志愿方案"), titleStyle);
+        sheet.addMergedRegion(new CellRangeAddress(0, 0, 0, headers.length - 1));
+        Row subtitleRow = sheet.createRow(rowIdx++);
+        subtitleRow.setHeightInPoints(25);
+        createCell(subtitleRow, 0,
+                String.format("%d 年 · 共 %d 个志愿 · 导出于 %s", currentYear, items.size(),
+                        LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))), subtitleStyle);
+        sheet.addMergedRegion(new CellRangeAddress(1, 1, 0, headers.length - 1));
+        rowIdx++;
+        int headerRowIndex = rowIdx;
         Row headerRow = sheet.createRow(rowIdx++);
+        headerRow.setHeightInPoints(28);
         for (int i = 0; i < headers.length; i++) {
             createCell(headerRow, i, headers[i], headerStyle);
         }
 
-        for (VolunteerItem item : items) {
+        for (int itemIndex = 0; itemIndex < items.size(); itemIndex++) {
+            VolunteerItem item = items.get(itemIndex);
             Row row = sheet.createRow(rowIdx++);
+            row.setHeightInPoints(25);
             EnrollmentPlan plan = planMap.get(item.getPlanId());
+            CellStyle rowStyle = itemIndex % 2 == 0 ? dataStyle : alternateDataStyle;
             int col = 0;
 
-            createCell(row, col++, String.valueOf(rowIdx - 1), dataStyle);
-            createCell(row, col++, text(item.getLabel()), dataStyle);
-            createCell(row, col++, text(item.getSchoolCode(), plan != null ? plan.getSchoolCode() : null), dataStyle);
-            createCell(row, col++, text(item.getSchoolName(), plan != null ? plan.getSchoolName() : null), dataStyle);
-            createCell(row, col++, text(item.getMajorCode(), plan != null ? plan.getMajorCode() : null), dataStyle);
-            createCell(row, col++, text(item.getMajorName(), plan != null ? plan.getMajorName() : null), dataStyle);
+            createCell(row, col++, String.valueOf(itemIndex + 1), rowStyle);
+            createCell(row, col++, text(item.getLabel()), rowStyle);
+            createCell(row, col++, text(item.getSchoolCode(), plan != null ? plan.getSchoolCode() : null), rowStyle);
+            createCell(row, col++, text(item.getSchoolName(), plan != null ? plan.getSchoolName() : null), rowStyle);
+            createCell(row, col++, text(item.getMajorCode(), plan != null ? plan.getMajorCode() : null), rowStyle);
+            createCell(row, col++, text(item.getMajorName(), plan != null ? plan.getMajorName() : null), rowStyle);
+            createCell(row, col++, resolveSchoolType(item, schoolMap), rowStyle);
             createCell(row, col++, text(item.getSubjectRequirementText(),
-                    plan != null ? plan.getSubjectRequirementText() : null, "不限"), dataStyle);
+                    plan != null ? plan.getSubjectRequirementText() : null, "不限"), rowStyle);
             createCell(row, col++, formatPlanCount(item.getPlanCount(),
-                    plan != null ? plan.getPlanCount() : null), dataStyle);
+                    plan != null ? plan.getPlanCount() : null), rowStyle);
             createCell(row, col++, formatTuition(item.getTuition(),
-                    plan != null ? plan.getTuition() : null), dataStyle);
-            createCell(row, col++, getMajorSubcategory(plan, standardMajorMap), dataStyle);
+                    plan != null ? plan.getTuition() : null), rowStyle);
+            createCell(row, col++, getMajorSubcategory(plan, standardMajorMap), rowStyle);
 
             boolean newPlan = "NEW".equalsIgnoreCase(text(item.getPlanStatus(),
                     plan != null ? plan.getPlanStatus() : null));
             Integer lastYearRank = item.getLastYearMinRank() != null
                     ? item.getLastYearMinRank()
                     : plan != null ? plan.getLastYearMinRank() : null;
-            createCell(row, col++, formatHistoricalRank(lastYearRank, newPlan), dataStyle);
+            createCell(row, col++, formatHistoricalRank(lastYearRank, newPlan), rowStyle);
             createCell(row, col++, formatHistoricalRank(
-                    plan != null ? plan.getTwoYearMinRank() : null, newPlan), dataStyle);
+                    plan != null ? plan.getTwoYearMinRank() : null, newPlan), rowStyle);
             createCell(row, col, formatHistoricalRank(
-                    plan != null ? plan.getThreeYearMinRank() : null, newPlan), dataStyle);
+                    plan != null ? plan.getThreeYearMinRank() : null, newPlan), rowStyle);
         }
 
         // 设置列宽
-        int[] widths = {10, 16, 16, 26, 16, 30, 20, 14, 14, 22, 18, 18, 18};
+        int[] widths = {8, 14, 14, 25, 14, 30, 12, 20, 12, 14, 20, 18, 18, 18};
         for (int i = 0; i < widths.length; i++) {
             sheet.setColumnWidth(i, widths[i] * 256);
         }
+        sheet.createFreezePane(0, headerRowIndex + 1);
+        sheet.setAutoFilter(new CellRangeAddress(headerRowIndex, rowIdx - 1, 0, headers.length - 1));
+        sheet.setZoom(85);
+        sheet.setDisplayGridlines(false);
+        sheet.getPrintSetup().setLandscape(true);
+        sheet.setFitToPage(true);
+        sheet.getPrintSetup().setFitWidth((short) 1);
     }
 
     static String formatHistoricalRank(Integer rank, boolean newPlan) {
@@ -308,6 +356,128 @@ public class ExportService {
             return "新增";
         }
         return rank != null ? String.valueOf(rank) : "-";
+    }
+
+    void generateHtml(String filePath, VolunteerForm form, List<VolunteerItem> items,
+                      CandidateProfile profile, Map<Long, EnrollmentPlan> planMap,
+                      Map<Long, School> schoolMap,
+                      Map<String, StandardMajor> standardMajorMap) throws IOException {
+        int year = form.getYear() != null ? form.getYear() : LocalDateTime.now().getYear();
+        long reachCount = items.stream().filter(i -> "冲".equals(i.getLabel())).count();
+        long matchCount = items.stream().filter(i -> "稳".equals(i.getLabel())).count();
+        long safeCount = items.stream().filter(i -> "保".equals(i.getLabel())).count();
+        StringBuilder rows = new StringBuilder();
+
+        for (int index = 0; index < items.size(); index++) {
+            VolunteerItem item = items.get(index);
+            EnrollmentPlan plan = planMap.get(item.getPlanId());
+            String schoolName = text(item.getSchoolName(), plan != null ? plan.getSchoolName() : null);
+            String majorName = text(item.getMajorName(), plan != null ? plan.getMajorName() : null);
+            String schoolType = resolveSchoolType(item, schoolMap);
+            String label = text(item.getLabel(), "未分类");
+            boolean newPlan = "NEW".equalsIgnoreCase(text(item.getPlanStatus(),
+                    plan != null ? plan.getPlanStatus() : null));
+            Integer lastYearRank = item.getLastYearMinRank() != null
+                    ? item.getLastYearMinRank()
+                    : plan != null ? plan.getLastYearMinRank() : null;
+            String searchText = String.join(" ", schoolName, majorName, text(item.getSchoolCode()),
+                    text(item.getMajorCode()), schoolType);
+
+            rows.append("<tr data-label=\"").append(htmlEscape(label)).append("\" data-type=\"")
+                    .append(htmlEscape(schoolType)).append("\" data-search=\"")
+                    .append(htmlEscape(searchText.toLowerCase(Locale.ROOT))).append("\">")
+                    .append("<td class=\"seq\">").append(index + 1).append("</td>")
+                    .append("<td><span class=\"tag ").append(labelClass(label)).append("\">")
+                    .append(htmlEscape(label)).append("</span></td>")
+                    .append("<td><div class=\"school\">").append(htmlEscape(schoolName)).append("</div><small>")
+                    .append(htmlEscape(text(item.getSchoolCode(), plan != null ? plan.getSchoolCode() : null))).append("</small></td>")
+                    .append("<td><div class=\"major\">").append(htmlEscape(majorName)).append("</div><small>")
+                    .append(htmlEscape(text(item.getMajorCode(), plan != null ? plan.getMajorCode() : null))).append("</small></td>")
+                    .append("<td><span class=\"nature ").append(natureClass(schoolType)).append("\">")
+                    .append(htmlEscape(schoolType)).append("</span></td>")
+                    .append("<td>").append(htmlEscape(text(item.getSubjectRequirementText(),
+                            plan != null ? plan.getSubjectRequirementText() : null, "不限"))).append("</td>")
+                    .append("<td>").append(htmlEscape(formatPlanCount(item.getPlanCount(),
+                            plan != null ? plan.getPlanCount() : null))).append("</td>")
+                    .append("<td>").append(htmlEscape(formatTuition(item.getTuition(),
+                            plan != null ? plan.getTuition() : null))).append("</td>")
+                    .append("<td>").append(htmlEscape(getMajorSubcategory(plan, standardMajorMap))).append("</td>")
+                    .append("<td class=\"rank\">").append(htmlEscape(formatHistoricalRank(lastYearRank, newPlan))).append("</td>")
+                    .append("<td class=\"rank\">").append(htmlEscape(formatHistoricalRank(
+                            plan != null ? plan.getTwoYearMinRank() : null, newPlan))).append("</td>")
+                    .append("<td class=\"rank\">").append(htmlEscape(formatHistoricalRank(
+                            plan != null ? plan.getThreeYearMinRank() : null, newPlan))).append("</td></tr>");
+        }
+
+        String template = """
+                <!doctype html><html lang="zh-CN"><head><meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width,initial-scale=1">
+                <title>__TITLE__</title><style>
+                :root{--navy:#102a43;--blue:#1f5f8b;--teal:#0f8b8d;--paper:#fff;--ink:#243b53;--muted:#627d98;--line:#d9e2ec;--bg:#f3f7fa}
+                *{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#eef5f8 0%,#f8fafc 45%,#edf7f6 100%);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+                .page{max-width:1540px;margin:0 auto;padding:34px 28px 54px}.hero{position:relative;overflow:hidden;background:linear-gradient(125deg,#102a43,#174f70 58%,#0f8b8d);color:white;border-radius:24px;padding:34px 38px;box-shadow:0 18px 45px #183b5625}
+                .hero:after{content:"";position:absolute;width:340px;height:340px;border:70px solid #ffffff10;border-radius:50%;right:-110px;top:-170px}.eyebrow{letter-spacing:.18em;opacity:.72;font-size:12px}.hero h1{font-size:30px;line-height:1.25;margin:9px 0 12px}.meta{display:flex;gap:22px;flex-wrap:wrap;color:#d9edf4}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0}.stat{background:#ffffffd9;backdrop-filter:blur(10px);border:1px solid #fff;border-radius:16px;padding:18px 20px;box-shadow:0 8px 24px #183b5610}.stat b{display:block;font-size:25px;color:var(--navy)}.stat span{color:var(--muted)}
+                .toolbar{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:minmax(260px,1fr) 180px 180px auto;gap:12px;background:#f8fafcee;padding:15px 0;backdrop-filter:blur(12px)}input,select{width:100%;height:44px;border:1px solid var(--line);border-radius:12px;background:white;padding:0 14px;color:var(--ink);outline:none}input:focus,select:focus{border-color:var(--teal);box-shadow:0 0 0 3px #0f8b8d18}.result{align-self:center;text-align:right;color:var(--muted);white-space:nowrap}
+                .table-card{background:var(--paper);border:1px solid #d9e2ecaa;border-radius:18px;overflow:auto;box-shadow:0 12px 35px #183b5610}table{border-collapse:separate;border-spacing:0;width:100%;min-width:1280px}thead th{position:sticky;top:0;z-index:2;background:var(--navy);color:white;text-align:left;padding:13px 12px;font-size:13px;white-space:nowrap}tbody td{padding:13px 12px;border-bottom:1px solid #edf2f7;vertical-align:middle}tbody tr:nth-child(even){background:#f8fafc}tbody tr:hover{background:#edf8f7}.seq,.rank{text-align:center;font-variant-numeric:tabular-nums}.school,.major{font-weight:650;color:#183b56}small{color:var(--muted)}.tag,.nature{display:inline-flex;padding:3px 10px;border-radius:999px;font-weight:650;white-space:nowrap}.reach{background:#fff0f0;color:#c53030}.match{background:#fff8df;color:#9c6500}.safe{background:#e8f7f1;color:#13795b}.neutral{background:#edf2f7;color:#526779}.public{background:#e7f2fb;color:#1f5f8b}.private{background:#f5eefa;color:#7b4a99}.empty{padding:55px;text-align:center;color:var(--muted);display:none}.foot{text-align:center;color:var(--muted);margin-top:22px;font-size:12px}
+                @media(max-width:800px){.page{padding:18px 12px}.hero{padding:26px 22px;border-radius:18px}.hero h1{font-size:24px}.stats{grid-template-columns:repeat(2,1fr)}.toolbar{grid-template-columns:1fr 1fr}.toolbar input{grid-column:1/-1}.result{text-align:left}.stat{padding:14px}}
+                @media print{body{background:white}.page{max-width:none;padding:0}.hero{box-shadow:none}.toolbar{display:none}.table-card{box-shadow:none;border:0}thead th{position:static}.foot{margin-top:10px}}
+                </style></head><body><main class="page"><section class="hero"><div class="eyebrow">GAOKAO VOLUNTEER PORTFOLIO</div><h1>__TITLE__</h1><div class="meta"><span>__YEAR__ 年高考</span><span>考生分数：__SCORE__</span><span>省排名：__RANK__</span><span>导出时间：__TIME__</span></div></section>
+                <section class="stats"><div class="stat"><b>__TOTAL__</b><span>志愿总数</span></div><div class="stat"><b>__REACH__</b><span>冲刺志愿</span></div><div class="stat"><b>__MATCH__</b><span>稳妥志愿</span></div><div class="stat"><b>__SAFE__</b><span>保底志愿</span></div></section>
+                <section class="toolbar"><input id="search" type="search" placeholder="搜索院校、专业、代码…"><select id="type"><option value="">全部办学性质</option><option>公办</option><option>民办</option><option>独立学院</option><option>中外合作办学</option></select><select id="label"><option value="">全部冲稳保</option><option>冲</option><option>稳</option><option>保</option><option>未分类</option></select><div class="result">显示 <b id="visible">__TOTAL__</b> / __TOTAL__ 条</div></section>
+                <section class="table-card"><table><thead><tr><th>序号</th><th>冲稳保</th><th>院校</th><th>专业</th><th>办学性质</th><th>选科要求</th><th>计划</th><th>学费/年</th><th>专业类</th><th>__Y1__ 位次</th><th>__Y2__ 位次</th><th>__Y3__ 位次</th></tr></thead><tbody id="rows">__ROWS__</tbody></table><div id="empty" class="empty">没有符合当前筛选条件的志愿</div></section>
+                <div class="foot">本志愿方案仅供参考，不构成录取承诺。请以山东省教育招生考试院官方信息为准。</div></main>
+                <script>const q=document.querySelector('#search'),t=document.querySelector('#type'),l=document.querySelector('#label'),rs=[...document.querySelectorAll('#rows tr')],v=document.querySelector('#visible'),e=document.querySelector('#empty');function filter(){const s=q.value.trim().toLowerCase();let n=0;rs.forEach(r=>{const ok=(!s||r.dataset.search.includes(s))&&(!t.value||r.dataset.type===t.value)&&(!l.value||r.dataset.label===l.value);r.hidden=!ok;if(ok)n++});v.textContent=n;e.style.display=n?'none':'block'}[q,t,l].forEach(x=>x.addEventListener('input',filter));</script></body></html>
+                """;
+        String html = template
+                .replace("__TITLE__", htmlEscape(text(form.getName(), "高考志愿方案")))
+                .replace("__YEAR__", String.valueOf(year))
+                .replace("__SCORE__", profile != null && profile.getScore() != null ? htmlEscape(String.valueOf(profile.getScore())) : "-")
+                .replace("__RANK__", profile != null && profile.getRank() != null ? htmlEscape(String.valueOf(profile.getRank())) : "-")
+                .replace("__TIME__", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")))
+                .replace("__TOTAL__", String.valueOf(items.size()))
+                .replace("__REACH__", String.valueOf(reachCount))
+                .replace("__MATCH__", String.valueOf(matchCount))
+                .replace("__SAFE__", String.valueOf(safeCount))
+                .replace("__Y1__", String.valueOf(year - 1))
+                .replace("__Y2__", String.valueOf(year - 2))
+                .replace("__Y3__", String.valueOf(year - 3))
+                .replace("__ROWS__", rows.toString());
+        Files.writeString(Paths.get(filePath), html, StandardCharsets.UTF_8);
+    }
+
+    private String resolveSchoolType(VolunteerItem item, Map<Long, School> schoolMap) {
+        School school = item.getSchoolId() != null ? schoolMap.get(item.getSchoolId()) : null;
+        return formatSchoolType(text(item.getSchoolType(), school != null ? school.getSchoolType() : null));
+    }
+
+    static String formatSchoolType(String value) {
+        if (value == null || value.isBlank()) return "未知";
+        return switch (value.trim().toUpperCase(Locale.ROOT)) {
+            case "PUBLIC" -> "公办";
+            case "PRIVATE" -> "民办";
+            default -> value.trim();
+        };
+    }
+
+    static String htmlEscape(String value) {
+        if (value == null) return "";
+        return value.replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;");
+    }
+
+    private String labelClass(String label) {
+        return switch (label) {
+            case "冲" -> "reach";
+            case "稳" -> "match";
+            case "保" -> "safe";
+            default -> "neutral";
+        };
+    }
+
+    private String natureClass(String schoolType) {
+        if (schoolType.contains("公办")) return "public";
+        if (schoolType.contains("民办")) return "private";
+        return "neutral";
     }
 
     private void createCheckSheet(XSSFWorkbook workbook, Long formId, Map<Long, EnrollmentPlan> planMap) {
@@ -430,26 +600,60 @@ public class ExportService {
         Font font = workbook.createFont();
         font.setBold(true);
         font.setFontHeightInPoints((short) 11);
+        font.setColor(IndexedColors.WHITE.getIndex());
         style.setFont(font);
-        style.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        style.setFillForegroundColor(IndexedColors.DARK_TEAL.getIndex());
         style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
-        style.setBorderBottom(BorderStyle.THIN);
-        style.setBorderTop(BorderStyle.THIN);
-        style.setBorderLeft(BorderStyle.THIN);
-        style.setBorderRight(BorderStyle.THIN);
+        style.setBorderBottom(BorderStyle.MEDIUM);
+        style.setBottomBorderColor(IndexedColors.TEAL.getIndex());
         style.setAlignment(HorizontalAlignment.CENTER);
         style.setVerticalAlignment(VerticalAlignment.CENTER);
         return style;
     }
 
+    private CellStyle createTitleStyle(XSSFWorkbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        Font font = workbook.createFont();
+        font.setBold(true);
+        font.setFontHeightInPoints((short) 20);
+        font.setColor(IndexedColors.WHITE.getIndex());
+        style.setFont(font);
+        style.setFillForegroundColor(IndexedColors.DARK_TEAL.getIndex());
+        style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        style.setAlignment(HorizontalAlignment.LEFT);
+        style.setVerticalAlignment(VerticalAlignment.CENTER);
+        style.setIndention((short) 1);
+        return style;
+    }
+
+    private CellStyle createSubtitleStyle(XSSFWorkbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        Font font = workbook.createFont();
+        font.setFontHeightInPoints((short) 10);
+        font.setColor(IndexedColors.DARK_TEAL.getIndex());
+        style.setFont(font);
+        style.setFillForegroundColor(IndexedColors.LIGHT_TURQUOISE.getIndex());
+        style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        style.setAlignment(HorizontalAlignment.LEFT);
+        style.setVerticalAlignment(VerticalAlignment.CENTER);
+        style.setIndention((short) 1);
+        return style;
+    }
+
     private CellStyle createDataStyle(XSSFWorkbook workbook) {
         CellStyle style = workbook.createCellStyle();
-        style.setBorderBottom(BorderStyle.THIN);
-        style.setBorderTop(BorderStyle.THIN);
-        style.setBorderLeft(BorderStyle.THIN);
-        style.setBorderRight(BorderStyle.THIN);
+        style.setBorderBottom(BorderStyle.HAIR);
+        style.setBottomBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
         style.setVerticalAlignment(VerticalAlignment.CENTER);
         style.setWrapText(true);
+        return style;
+    }
+
+    private CellStyle createAlternateDataStyle(XSSFWorkbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        style.cloneStyleFrom(createDataStyle(workbook));
+        style.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
         return style;
     }
 
@@ -469,5 +673,17 @@ public class ExportService {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
         String safeName = formName.replaceAll("[\\\\/:*?\"<>|]", "_");
         return "山东高考志愿表_" + safeName + "_" + timestamp + ".xlsx";
+    }
+
+    private String toHtmlPath(String excelPath) {
+        return excelPath.endsWith(".xlsx")
+                ? excelPath.substring(0, excelPath.length() - 5) + ".html"
+                : excelPath + ".html";
+    }
+
+    private String toHtmlFileName(String excelFileName) {
+        return excelFileName.endsWith(".xlsx")
+                ? excelFileName.substring(0, excelFileName.length() - 5) + ".html"
+                : excelFileName + ".html";
     }
 }

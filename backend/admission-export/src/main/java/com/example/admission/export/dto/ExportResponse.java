@@ -22,6 +22,12 @@ public class ExportResponse {
     /** 文件名 */
     private String fileName;
 
+    /** 可交互 HTML 下载地址 */
+    private String htmlFileUrl;
+
+    /** HTML 文件名 */
+    private String htmlFileName;
+
     /** 导出记录ID */
     private Long exportRecordId;
 

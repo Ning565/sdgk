@@ -229,6 +229,8 @@ export interface VolunteerFormDetailDTO extends VolunteerFormDTO {
 export interface VolunteerExportResponseDTO {
   fileUrl: string;
   fileName: string;
+  htmlFileUrl: string;
+  htmlFileName: string;
   exportRecordId: number;
   exportedAt: string;
 }

@@ -256,7 +256,8 @@ async function handleExport(confirmWithErrors = false) {
       clientOperationId: operationId('export', formId),
     });
     downloadExportFile(response.data.fileUrl);
-    ElMessage.success('Excel 已生成，正在下载');
+    window.setTimeout(() => downloadExportFile(response.data.htmlFileUrl), 350);
+    ElMessage.success('Excel 和可筛选 HTML 已生成，正在下载');
   } catch (error) {
     if (error instanceof ApiError && error.code === 8008 && !confirmWithErrors) {
       try {
