@@ -106,6 +106,21 @@ function formatTuition(tuition?: number) {
   return tuition != null ? `${tuition} 元/年` : '-';
 }
 
+function schoolNatureLabel(schoolType?: string) {
+  const normalized = schoolType?.trim().toUpperCase();
+  if (!normalized) return '';
+  if (normalized === 'PUBLIC') return '公办';
+  if (normalized === 'PRIVATE') return '民办';
+  return schoolType?.trim() || '';
+}
+
+function schoolNatureTagType(schoolType?: string): 'danger' | 'success' | 'info' {
+  const label = schoolNatureLabel(schoolType);
+  if (label.includes('民办')) return 'danger';
+  if (label.includes('公办')) return 'success';
+  return 'info';
+}
+
 function downloadExportFile(fileUrl: string) {
   const link = document.createElement('a');
   link.href = fileUrl;
@@ -385,6 +400,15 @@ async function handleExport(confirmWithErrors = false) {
                   <span class="choice-row__school">{{ choice.schoolName }}</span>
                   <span class="choice-row__major">{{ choice.majorName }}</span>
                 </div>
+                <el-tag
+                  v-if="schoolNatureLabel(choice.schoolType)"
+                  class="choice-row__nature"
+                  size="small"
+                  effect="light"
+                  :type="schoolNatureTagType(choice.schoolType)"
+                >
+                  {{ schoolNatureLabel(choice.schoolType) }}
+                </el-tag>
                 <el-tag v-if="choice.label" size="small" :type="choice.label === '冲' ? 'danger' : choice.label === '稳' ? 'warning' : 'success'">{{ choice.label }}</el-tag>
                 <RiskLabel v-else-if="choice.riskLevel" :level="choice.riskLevel" />
                 <el-tag v-if="choice.probability != null" size="small" type="primary">{{ formatProbability(choice.probability) }}</el-tag>
@@ -606,6 +630,10 @@ async function handleExport(confirmWithErrors = false) {
 .choice-row__major {
   font-size: 14px;
   color: var(--el-text-color-regular);
+}
+.choice-row__nature {
+  flex-shrink: 0;
+  font-weight: 600;
 }
 .choice-row__meta {
   display: grid;
