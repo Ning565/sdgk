@@ -20,6 +20,9 @@ const batchAddingSchoolIds = ref<Set<number>>(new Set());
 const evidenceDrawerVisible = ref(false);
 const evidencePlan = ref<PlanItem | null>(null);
 const evidenceSchool = ref<SchoolGroup | null>(null);
+const formPreviewOpen = ref(false);
+const selectedFormId = ref<string>('');
+const switchingForm = ref(false);
 const recommendationSettings = ref({
   count: 96,
   rushPercent: 25,
@@ -166,6 +169,12 @@ const currentFormItems = computed(() => volunteerStore.currentForm?.items || vol
 const addedPlanIds = computed(() => new Set(currentFormItems.value.map(item => item.planId).filter(Boolean)));
 const currentFormName = computed(() => volunteerStore.currentForm?.name || '当前志愿表');
 const currentFormCount = computed(() => volunteerStore.currentForm?.itemCount ?? currentFormItems.value.length);
+const previewFormItems = computed(() => currentFormItems.value.slice(0, 8));
+const selectableForms = computed(() => {
+  const year = candidateStore.candidateProfile?.year || currentYear;
+  const sameYear = volunteerStore.forms.filter(form => !form.year || form.year === year);
+  return sameYear.length > 0 ? sameYear : volunteerStore.forms;
+});
 const addedPositionMap = computed(() => {
   const map = new Map<number, number>();
   currentFormItems.value.forEach((item, index) => {
@@ -186,6 +195,14 @@ watch(
   }
 );
 
+watch(
+  () => volunteerStore.currentForm?.id,
+  id => {
+    if (id != null) selectedFormId.value = String(id);
+  },
+  { immediate: true }
+);
+
 function formatCount(value: number) {
   return value.toLocaleString('zh-CN');
 }
@@ -202,6 +219,35 @@ function formatRank(value?: number) {
 
 function formatPlanCount(value?: number) {
   return value != null ? `${value}人` : '-';
+}
+
+function formCount(form: { itemCount?: number; filledChoices?: number; totalChoices?: number }) {
+  return form.itemCount ?? form.filledChoices ?? form.totalChoices ?? 0;
+}
+
+function formCapacity(form: { maxItems?: number | null }) {
+  return form.maxItems != null ? form.maxItems : '不限';
+}
+
+async function selectVolunteerForm(formId: string | number) {
+  if (!formId || String(volunteerStore.currentForm?.id) === String(formId)) return;
+  switchingForm.value = true;
+  try {
+    await volunteerStore.selectForm(formId);
+    selectedPlanIds.value = new Set();
+    ElMessage.success(`已切换到“${volunteerStore.currentForm?.name || '志愿表'}”`);
+  } catch (err: unknown) {
+    ElMessage.error(err instanceof Error ? err.message : '切换志愿表失败');
+    selectedFormId.value = volunteerStore.currentForm?.id != null
+      ? String(volunteerStore.currentForm.id)
+      : '';
+  } finally {
+    switchingForm.value = false;
+  }
+}
+
+function toggleFormPreview() {
+  formPreviewOpen.value = !formPreviewOpen.value;
 }
 
 function addedPosition(planId: number) {
@@ -268,7 +314,7 @@ function isSchoolIndeterminate(school: SchoolGroup) {
 
 function togglePlanSelection(planId: number, checked: string | number | boolean) {
   const next = new Set(selectedPlanIds.value);
-  if (Boolean(checked)) {
+  if (checked) {
     next.add(planId);
   } else {
     next.delete(planId);
@@ -279,7 +325,7 @@ function togglePlanSelection(planId: number, checked: string | number | boolean)
 function toggleSchoolSelection(school: SchoolGroup, checked: string | number | boolean) {
   const next = new Set(selectedPlanIds.value);
   for (const plan of selectablePlans(school)) {
-    if (Boolean(checked)) {
+    if (checked) {
       next.add(plan.planId);
     } else {
       next.delete(plan.planId);
@@ -411,6 +457,9 @@ async function applyRecommendationSettings() {
 
 onMounted(async () => {
   await fetchSmartRecommendations(false);
+  if (volunteerStore.currentForm?.id != null) {
+    selectedFormId.value = String(volunteerStore.currentForm.id);
+  }
 });
 
 async function addToVolunteer(plan: PlanItem, school: SchoolGroup, showMessage = true) {
@@ -748,12 +797,69 @@ function labelType(label?: string) {
       </div>
     </el-drawer>
 
-    <div v-if="volunteerStore.currentForm" class="volunteer-float" @click="router.push('/volunteer-forms/' + volunteerStore.currentForm.id)">
-      <div class="volunteer-float__count">{{ currentFormCount }}</div>
-      <div>
-        <div class="volunteer-float__title">{{ currentFormName }}</div>
-        <div class="volunteer-float__sub">已加入 / {{ volunteerStore.currentForm?.maxItems != null ? volunteerStore.currentForm.maxItems : '不限' }}</div>
-      </div>
+    <div v-if="volunteerStore.currentForm" class="volunteer-dock">
+      <transition name="volunteer-panel">
+        <section v-if="formPreviewOpen" class="volunteer-preview" data-testid="volunteer-preview" @click.stop>
+          <div class="volunteer-preview__header">
+            <div>
+              <span>当前选择</span>
+              <strong>加入到哪张志愿表</strong>
+            </div>
+            <button type="button" aria-label="收起志愿表" @click="formPreviewOpen = false">×</button>
+          </div>
+          <el-select
+            v-model="selectedFormId"
+            class="volunteer-preview__select"
+            data-testid="volunteer-form-select"
+            placeholder="请选择志愿表"
+            :loading="switchingForm"
+            @change="selectVolunteerForm"
+          >
+            <el-option
+              v-for="(form, index) in selectableForms"
+              :key="String(form.id)"
+              :value="String(form.id)"
+              :label="`${index + 1}. ${form.name}（${formCount(form)}/${formCapacity(form)}）`"
+            />
+          </el-select>
+          <div class="volunteer-preview__summary">
+            <div>
+              <strong>{{ currentFormName }}</strong>
+              <span>{{ currentFormCount }} / {{ formCapacity(volunteerStore.currentForm) }} 个志愿</span>
+            </div>
+            <el-tag size="small" type="info">{{ volunteerStore.currentForm.year || currentYear }}</el-tag>
+          </div>
+          <div v-if="previewFormItems.length" class="volunteer-preview__list">
+            <div v-for="(item, index) in previewFormItems" :key="String(item.id || item.planId || index)" class="volunteer-preview__item">
+              <span>{{ item.sortOrder ?? item.order ?? index + 1 }}</span>
+              <div>
+                <strong>{{ item.schoolName }}</strong>
+                <small>{{ item.majorName }}</small>
+              </div>
+              <el-tag v-if="item.label" size="small" :type="labelType(item.label)">{{ item.label }}</el-tag>
+            </div>
+          </div>
+          <div v-else class="volunteer-preview__empty">这张志愿表还没有添加专业</div>
+          <div v-if="currentFormItems.length > previewFormItems.length" class="volunteer-preview__more">
+            还有 {{ currentFormItems.length - previewFormItems.length }} 个志愿未展开
+          </div>
+        </section>
+      </transition>
+      <button
+        type="button"
+        class="volunteer-float"
+        data-testid="volunteer-float-toggle"
+        :aria-expanded="formPreviewOpen"
+        aria-label="展开当前志愿表"
+        @click="toggleFormPreview"
+      >
+        <div class="volunteer-float__count">{{ currentFormCount }}</div>
+        <div class="volunteer-float__text">
+          <div class="volunteer-float__title">{{ currentFormName }}</div>
+          <div class="volunteer-float__sub">已加入 / {{ formCapacity(volunteerStore.currentForm) }}</div>
+        </div>
+        <span class="volunteer-float__arrow" :class="{ open: formPreviewOpen }">⌃</span>
+      </button>
     </div>
   </div>
 </template>
@@ -852,15 +958,44 @@ function labelType(label?: string) {
 .evidence__trend div { display: flex; justify-content: space-between; padding: 8px 10px; background: #f8fafc; border-radius: 6px; font-size: 14px; }
 .evidence__empty { color: #9ca3af; font-size: 13px; padding: 10px 0; }
 .evidence__note { margin-top: 22px; color: #9ca3af; font-size: 12px; }
-.volunteer-float { position: fixed; right: 28px; bottom: 28px; display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #111827; color: #fff; border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,.18); cursor: pointer; z-index: 20; }
+.volunteer-dock { position: fixed; right: 28px; bottom: 28px; z-index: 20; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.volunteer-float { border: 0; display: flex; align-items: center; gap: 12px; min-width: 188px; padding: 12px 14px; background: #111827; color: #fff; border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.18); cursor: pointer; text-align: left; }
+.volunteer-float:hover { background: #172033; }
 .volunteer-float__count { width: 34px; height: 34px; border-radius: 50%; background: #4f46e5; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+.volunteer-float__text { flex: 1; min-width: 0; }
 .volunteer-float__title { font-size: 13px; font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .volunteer-float__sub { font-size: 12px; color: #cbd5e1; }
+.volunteer-float__arrow { color: #94a3b8; font-size: 16px; transition: transform .2s; }
+.volunteer-float__arrow.open { transform: rotate(180deg); }
+.volunteer-preview { width: 360px; overflow: hidden; background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; box-shadow: 0 20px 55px rgba(15,23,42,.22); }
+.volunteer-preview__header { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px 12px; }
+.volunteer-preview__header div { display: flex; flex-direction: column; gap: 2px; }
+.volunteer-preview__header span { font-size: 11px; color: #9ca3af; }
+.volunteer-preview__header strong { font-size: 15px; color: #111827; }
+.volunteer-preview__header button { border: 0; background: #f3f4f6; color: #6b7280; width: 28px; height: 28px; border-radius: 8px; cursor: pointer; font-size: 18px; line-height: 1; }
+.volunteer-preview__select { width: calc(100% - 36px); margin: 0 18px 14px; }
+.volunteer-preview__summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; background: linear-gradient(135deg,#f5f7ff,#f8fafc); border-top: 1px solid #eef2f7; border-bottom: 1px solid #eef2f7; }
+.volunteer-preview__summary div { display: flex; flex-direction: column; min-width: 0; }
+.volunteer-preview__summary strong { color: #1f2937; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.volunteer-preview__summary span { color: #6b7280; font-size: 12px; }
+.volunteer-preview__list { max-height: 300px; overflow-y: auto; padding: 6px 0; }
+.volunteer-preview__item { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 9px 18px; }
+.volunteer-preview__item:hover { background: #f8fafc; }
+.volunteer-preview__item > span { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #eef2ff; color: #4f46e5; font-size: 11px; font-weight: 700; }
+.volunteer-preview__item div { min-width: 0; display: flex; flex-direction: column; }
+.volunteer-preview__item strong { color: #374151; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.volunteer-preview__item small { color: #9ca3af; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.volunteer-preview__empty { padding: 28px 18px; text-align: center; color: #9ca3af; font-size: 13px; }
+.volunteer-preview__more { padding: 9px 18px 12px; border-top: 1px solid #f3f4f6; color: #9ca3af; text-align: center; font-size: 11px; }
+.volunteer-panel-enter-active,.volunteer-panel-leave-active { transition: opacity .18s ease, transform .18s ease; transform-origin: bottom right; }
+.volunteer-panel-enter-from,.volunteer-panel-leave-to { opacity: 0; transform: translateY(8px) scale(.98); }
 @media (max-width: 900px) {
   .plan-bulk,
   .plan-row { padding-left: 20px; }
   .plan-row { align-items: flex-start; flex-wrap: wrap; }
   .plan-row__center { flex-basis: 100%; flex-wrap: wrap; padding-left: 30px; }
   .plan-row__right { flex-basis: 100%; justify-content: flex-end; flex-wrap: wrap; }
+  .volunteer-dock { right: 14px; bottom: 14px; }
+  .volunteer-preview { width: min(360px, calc(100vw - 28px)); }
 }
 </style>

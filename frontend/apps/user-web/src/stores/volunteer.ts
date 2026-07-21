@@ -99,6 +99,9 @@ export const useVolunteerStore = defineStore('volunteer', () => {
     if (forms.value.length === 0) {
       await fetchForms();
     }
+    if (currentForm.value && (!year || currentForm.value.year === year)) {
+      return currentForm.value;
+    }
     const matched = forms.value.find(form => !year || form.year === year) || forms.value[0];
     if (matched) {
       await fetchFormDetail(String(matched.id));
@@ -107,6 +110,11 @@ export const useVolunteerStore = defineStore('volunteer', () => {
     const created = await createFormForYear('我的志愿表', year);
     await fetchFormDetail(String(created.id));
     return created;
+  }
+
+  async function selectForm(formId: string | number) {
+    await fetchFormDetail(String(formId));
+    return currentForm.value;
   }
 
   async function addRecommendationToCurrentForm(plan: PlanItem, year?: number) {
@@ -158,7 +166,7 @@ export const useVolunteerStore = defineStore('volunteer', () => {
 
   return {
     forms, currentForm, recResult, loading,
-    fetchForms, fetchFormDetail, createForm, createFormForYear, ensureActiveForm,
+    fetchForms, fetchFormDetail, createForm, createFormForYear, ensureActiveForm, selectForm,
     addRecommendationToCurrentForm, fetchRecommendations,
   };
 });
